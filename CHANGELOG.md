@@ -17,6 +17,18 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.9 — Fix: bonded but no live data (Android)
+
+- **Fixed (Android): a strap that connects and bonds but shows no live data** — heart rate, battery,
+  worn and events all blank (it reproduces reliably on newer Android). A GATT callback-threading race
+  let the bond's with-response write fire before the notification subscriptions and starve them as
+  BUSY, so the strap looked bonded (commands like buzz worked) but not one notification was ever
+  enabled. NOOP now pins all GATT callbacks to the main looper (API 28+) and retries a transiently-BUSY
+  subscribe. Reported, diagnosed and hardware-verified (Pixel 8 / Android 16) by a community
+  contributor (PR #22); reviewed for no regression to the verified WHOOP 4.0 path.
+
+---
+
 ## 1.8 — Strap-log export on Mac + a Health Monitor fix
 
 - **New (Mac): export the strap log.** The Live screen's strap-log card now has **Copy** and **Save…**

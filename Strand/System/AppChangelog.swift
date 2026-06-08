@@ -7,7 +7,7 @@ enum AppChangelog {
 
     /// Bump this when you add a release below. The "What's New" sheet shows automatically when the
     /// stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
-    static let currentVersion = "1.8"
+    static let currentVersion = "1.9"
 
     struct Release: Identifiable {
         let version: String
@@ -19,6 +19,13 @@ enum AppChangelog {
 
     /// Newest first.
     static let releases: [Release] = [
+        Release(
+            version: "1.9",
+            title: "Fix: bonded but no live data (Android)",
+            date: "June 2026",
+            items: [
+                "Fixed an Android bug where the strap would connect and bond but show no live data at all — heart rate, battery, worn and events all blank — on some phones (it shows up reliably on newer Android). A Bluetooth callback-threading race let the pairing write starve the data-stream subscriptions; NOOP now pins all Bluetooth callbacks to one thread and retries a momentarily-busy subscription, so the stream comes up reliably. Reported, diagnosed and hardware-verified by a community contributor.",
+            ]),
         Release(
             version: "1.8",
             title: "Strap-log export on Mac + a Health Monitor fix",

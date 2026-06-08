@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "1.8"
+    const val CURRENT_VERSION = "1.9"
 
     data class Release(
         val version: String,
@@ -36,6 +36,14 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "1.9",
+            title = "Fix: bonded but no live data (Android)",
+            date = "June 2026",
+            items = listOf(
+                "Fixed an Android bug where the strap would connect and bond but show no live data at all — heart rate, battery, worn and events all blank — on some phones (it shows up reliably on newer Android). A Bluetooth callback-threading race let the pairing write starve the data-stream subscriptions; NOOP now pins all Bluetooth callbacks to one thread and retries a momentarily-busy subscription, so the stream comes up reliably. Reported, diagnosed and hardware-verified by a community contributor.",
+            ),
+        ),
         Release(
             version = "1.8",
             title = "Strap-log export on Mac + a Health Monitor fix",
