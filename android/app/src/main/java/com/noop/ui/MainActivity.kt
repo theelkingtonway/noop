@@ -131,6 +131,25 @@ object NoopPrefs {
     fun setDebugLogging(context: Context, enabled: Boolean) {
         of(context).edit().putBoolean(KEY_DEBUG_LOGGING, enabled).apply()
     }
+
+    /** Smart alarm: arm the strap's firmware alarm to buzz at a wake time. Default off; default time 07:00. */
+    const val KEY_SMART_ALARM = "noop.smartAlarmEnabled"
+    const val KEY_SMART_ALARM_MINUTES = "noop.smartAlarmMinutes"
+
+    fun smartAlarmEnabled(context: Context): Boolean =
+        of(context).getBoolean(KEY_SMART_ALARM, false)
+
+    fun setSmartAlarmEnabled(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_SMART_ALARM, enabled).apply()
+    }
+
+    /** Wake time as minutes since midnight (default 420 = 07:00). */
+    fun smartAlarmMinutes(context: Context): Int =
+        of(context).getInt(KEY_SMART_ALARM_MINUTES, 7 * 60)
+
+    fun setSmartAlarmMinutes(context: Context, minutes: Int) {
+        of(context).edit().putInt(KEY_SMART_ALARM_MINUTES, minutes).apply()
+    }
 }
 
 /**

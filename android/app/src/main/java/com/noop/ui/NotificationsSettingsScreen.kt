@@ -577,11 +577,11 @@ private fun PillButton(label: String, icon: ImageVector, enabled: Boolean, onCli
     }
 }
 
-// MARK: - Quiet-hours time chip (TimePickerDialog → HH:mm)
+// MARK: - Time chip (TimePickerDialog → HH:mm). Reused by the Automations smart-alarm time too.
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TimeChip(
+internal fun TimeChip(
     minutes: Int,
     accessibilityLabel: String,
     onPicked: (Int) -> Unit,

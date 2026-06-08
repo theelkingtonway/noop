@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "1.25"
+    const val CURRENT_VERSION = "1.26"
 
     data class Release(
         val version: String,
@@ -36,6 +36,14 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "1.26",
+            title = "Smart alarm actually works on Android",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (Android): the Smart alarm in Automations didn't work — the toggle reset the moment you left the screen, and the wake time was stuck at 07:00 with no way to change it. It's now a real, saved setting with a proper time picker, and on WHOOP 4.0 it arms the strap's own firmware alarm, so your wrist buzzes at your wake time even if your phone is asleep or NOOP is closed (matching the Mac). Connect the strap to arm it. (On 5.0/MG the alarm command isn't verified yet — same situation as the buzz.)",
+            ),
+        ),
         Release(
             version = "1.25",
             title = "WHOOP 5.0/MG history download (experimental) + pairing help (Mac)",

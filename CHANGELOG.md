@@ -17,6 +17,20 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.26 — Smart alarm actually works on Android
+
+- **Fixed (Android): the Automations "Smart alarm" was a non-functional mock-up** (issue #51). The whole
+  screen's toggles were ephemeral `remember { mutableStateOf(false) }` with no persistence and no backend,
+  and the wake time was hardcoded static `Text("07:00")` (not tappable) — so the toggle reset on navigation
+  and the time couldn't be changed. The smart alarm is now a **real, persisted feature** mirroring macOS:
+  `NoopPrefs` stores `smartAlarmEnabled` + `smartAlarmMinutes`; the time uses the reusable `TimeChip`
+  picker (now `internal`, shared with the quiet-hours chip); and `AppViewModel.applySmartAlarm()` arms the
+  strap's **firmware alarm** via `WhoopBleClient.armStrapAlarm()` (`SET_CLOCK` → `SET_ALARM_TIME(66)` with
+  `[0x01]+u32 LE epoch+[0,0]`) / `disableStrapAlarm()` (`DISABLE_ALARM(69)`) — so on **WHOOP 4.0** it buzzes
+  at the wake time even if the phone is asleep or NOOP is closed. Needs the strap connected to arm. (On
+  5.0/MG the alarm command is dropped by the `send()` guard, same as the buzz, until verified.) The other
+  Automations toggles (zone coaching / stress nudge / auto-lock) remain preview-only — a separate follow-up.
+
 ## 1.25 — WHOOP 5/MG history offload (experimental) + pairing clarity (Mac)
 
 - **Added (macOS, experimental): a bonded WHOOP 5/MG strap now runs the historical offload.** Four

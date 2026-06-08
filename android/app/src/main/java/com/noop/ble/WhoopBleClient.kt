@@ -584,6 +584,34 @@ class WhoopBleClient(
         if (connectedFamily == DeviceFamily.WHOOP4) send(CommandNumber.GET_BATTERY_LEVEL)
     }
 
+    /**
+     * Arm the strap's **firmware** alarm to buzz at [epochSec] (absolute UTC seconds). The strap fires
+     * at that instant even if the phone is asleep or NOOP is closed. SET_CLOCK is sent first so the
+     * strap's RTC is UTC-correct (a wrong RTC fires the alarm at the wrong wall-clock time). Payload =
+     * `[0x01] + u32 LE epoch + [0x00, 0x00]`. Port of macOS `BLEManager.armStrapAlarm`. WHOOP 4.0; on
+     * 5/MG `send()` drops it (the 5/MG command set isn't verified for this yet).
+     */
+    fun armStrapAlarm(epochSec: Long) {
+        send(CommandNumber.SET_CLOCK, setClockPayload())
+        val e = epochSec.toInt()
+        val payload = byteArrayOf(
+            0x01,
+            (e and 0xFF).toByte(),
+            ((e shr 8) and 0xFF).toByte(),
+            ((e shr 16) and 0xFF).toByte(),
+            ((e shr 24) and 0xFF).toByte(),
+            0x00, 0x00,
+        )
+        send(CommandNumber.SET_ALARM_TIME, payload)
+        log("Alarm: armed (epoch $epochSec)")
+    }
+
+    /** Clear the strap's firmware alarm. Port of macOS `BLEManager.disableStrapAlarm`. */
+    fun disableStrapAlarm() {
+        send(CommandNumber.DISABLE_ALARM, byteArrayOf(0x01))
+        log("Alarm: disarmed")
+    }
+
     // ====================================================================================
     // MARK: Scanning
     // ====================================================================================

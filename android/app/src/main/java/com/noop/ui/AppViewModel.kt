@@ -223,6 +223,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *  proprietary command is dropped) and also fires the legacy command on WHOOP 4. */
     fun getBattery() = ble.refreshBattery()
 
+    // --- Smart alarm (persisted; arms the strap's firmware alarm). Port of macOS BehaviorStore +
+    // AppModel.applySmartAlarm. The previous Android UI was a non-persisted mock-up (issue #51). ---
+    private val _smartAlarmEnabled = MutableStateFlow(NoopPrefs.smartAlarmEnabled(appContext))
+    val smartAlarmEnabled: StateFlow<Boolean> = _smartAlarmEnabled.asStateFlow()
+    private val _smartAlarmMinutes = MutableStateFlow(NoopPrefs.smartAlarmMinutes(appContext))
+    val smartAlarmMinutes: StateFlow<Int> = _smartAlarmMinutes.asStateFlow()
+
+    fun setSmartAlarmEnabled(enabled: Boolean) {
+        _smartAlarmEnabled.value = enabled
+        NoopPrefs.setSmartAlarmEnabled(appContext, enabled)
+        applySmartAlarm()
+    }
+
+    fun setSmartAlarmMinutes(minutes: Int) {
+        _smartAlarmMinutes.value = minutes.coerceIn(0, 24 * 60 - 1)
+        NoopPrefs.setSmartAlarmMinutes(appContext, _smartAlarmMinutes.value)
+        applySmartAlarm()
+    }
+
+    /** Arm or clear the strap's firmware alarm from the current setting, computing the next occurrence
+     *  of the wake time (today, or tomorrow if it's already passed). Needs the strap connected — if it
+     *  isn't, `send()` logs "ignored — not connected" and arming happens next time you connect + toggle. */
+    private fun applySmartAlarm() {
+        if (!_smartAlarmEnabled.value) {
+            ble.disableStrapAlarm()
+            return
+        }
+        val cal = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, _smartAlarmMinutes.value / 60)
+            set(java.util.Calendar.MINUTE, _smartAlarmMinutes.value % 60)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        if (cal.timeInMillis <= System.currentTimeMillis()) cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+        ble.armStrapAlarm(cal.timeInMillis / 1000)
+    }
+
     /** Fire a haptic buzz on the strap (requires a bonded connection). */
     fun buzz(loops: Int = 2) = ble.buzz(loops)
 
