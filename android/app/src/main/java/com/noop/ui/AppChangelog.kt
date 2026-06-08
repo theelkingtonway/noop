@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "1.24"
+    const val CURRENT_VERSION = "1.25"
 
     data class Release(
         val version: String,
@@ -36,6 +36,15 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "1.25",
+            title = "WHOOP 5.0/MG history download (experimental) + pairing help (Mac)",
+            date = "June 2026",
+            items = listOf(
+                "Experimental (Mac): once your WHOOP 5.0/MG is properly paired (see below), NOOP now attempts to download the strap's stored history — the missing piece for on-device 5.0 recovery, strain and sleep. It's brand-new and needs real-hardware testing; if it works you'll see the offload run in the strap log. WHOOP 4.0 is completely unaffected.",
+                "Clearer 5.0/MG pairing: you can't just scan for a 5.0/MG — it has to be in pairing mode and freed from the official WHOOP app first (otherwise pairing is refused with \"Encryption is insufficient\"). The \"free your strap\" tip now shows right on the Live screen (it was hidden in Settings), and the README has a step-by-step pairing guide.",
+            ),
+        ),
         Release(
             version = "1.24",
             title = "Switch between your WHOOP 4 and 5.0 (Mac + Android)",

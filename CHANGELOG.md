@@ -17,6 +17,28 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.25 — WHOOP 5/MG history offload (experimental) + pairing clarity (Mac)
+
+- **Added (macOS, experimental): a bonded WHOOP 5/MG strap now runs the historical offload.** Four
+  interlocking gaps blocked it; all are now fixed, scoped strictly to `.whoop5` (WHOOP 4.0 byte-for-byte
+  unchanged): (1) `connectHandshakeDone` is set after the 5/MG bond + notify-subscribe, behind a new
+  `whoop5SessionStarted` once-guard that mirrors the WHOOP4 ack-storm guard (so the per-chunk acks
+  re-entering `didWriteValueFor` can't re-trigger the offload mid-stream); (2) the whoop5 branch now
+  kicks `requestSync(.connect)` + `startBackfillTimer()` (the trigger lived only in the WHOOP4 block);
+  (3) `send()` allowlists `SEND_HISTORICAL_DATA` + `HISTORICAL_DATA_RESULT` for 5/MG (puffin-framed,
+  same transport as the proven HR toggle); (4) `isOffloadFrame` is family-aware (reads the type byte at
+  `frame[8]` for puffin, not `frame[4]`) and inbound puffin offload frames (47/48/49/50) route to the
+  Backfiller during a backfill, while live REALTIME_DATA still only reaches the live router; the
+  `Backfiller` is family-aware (parse + `end_data` slice `frame[21:29]` for 5/MG, family captured at
+  `begin()`). The chunk-ack needs no new code — `send()` already owns the puffin framing + seq. **Brand
+  new, needs on-hardware verification; observable stage-by-stage in the strap log.** 117 WhoopProtocol
+  tests green; macOS builds clean.
+
+- **Changed (macOS): clearer WHOOP 5/MG pairing.** The bond-refused hint ("free the strap from the WHOOP
+  app — pairing mode") now shows on the **Live** screen where people connect (it was Settings-only), and
+  the README has a prominent *"Pairing a WHOOP 5.0 / MG — read this first"* guide (the one-bond-at-a-time
+  constraint, the `Encryption is insufficient` symptom, and the close-app → pairing-mode → connect steps).
+
 ## 1.24 — Switch between a WHOOP 4 and a 5.0/MG (Mac + Android)
 
 - **Fixed (macOS + Android): you couldn't switch straps once one was bonded.** The Live screen's strap
