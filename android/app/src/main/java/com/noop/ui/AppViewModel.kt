@@ -213,8 +213,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (realtimeWanters == 0) ble.stopRealtime()
     }
 
-    /** Ask the strap for its current battery level. */
-    fun getBattery() = ble.send(CommandNumber.GET_BATTERY_LEVEL)
+    /** Refresh the battery reading. Reads the standard 0x2A19 characteristic (works on 5/MG, where the
+     *  proprietary command is dropped) and also fires the legacy command on WHOOP 4. */
+    fun getBattery() = ble.refreshBattery()
 
     /** Fire a haptic buzz on the strap (requires a bonded connection). */
     fun buzz(loops: Int = 2) = ble.buzz(loops)

@@ -17,6 +17,18 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.22 — Battery refresh on WHOOP 5.0/MG (Mac + Android)
+
+- **Fixed (macOS + Android): "Refresh battery" was a no-op on WHOOP 5.0/MG.** `getBattery()` sent the
+  WHOOP 4 proprietary `GET_BATTERY_LEVEL` command, which the `send()` guard **drops** for 5/MG (only the
+  HR toggle + buzz are puffin-framed) — so a 5/MG strap's battery only updated via passive `0x2A19`
+  notifications, never on demand. Both platforms now read the **standard Battery Level characteristic
+  (`0x2A19`)** directly: macOS `BLEManager.refreshBattery()` (`readValue` → existing `didUpdateValueFor`
+  parse), Android `WhoopBleClient.refreshBattery()` (`readCharacteristic` → a newly-added
+  `onCharacteristicRead` callback → `onInbound` → `setBattery`). The char is also read once at discovery
+  when readable, so a value appears as soon as you connect. WHOOP 4 keeps its legacy command path too
+  (it gets both). Contributed via #47 (macOS); Android mirrored.
+
 ## 1.21 — WHOOP 5.0 historical biometrics + PPG channel fix (Mac)
 
 - **Added (macOS): WHOOP 5.0 type-47 v18 records now decode more biometric fields**, each gated to a

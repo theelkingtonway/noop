@@ -550,6 +550,29 @@ class WhoopBleClient(
         log("Buzz: patternId=2 loops=$n")
     }
 
+    /**
+     * Read the standard Battery Level characteristic (0x2A19) on demand for "Refresh battery".
+     * WHOOP 5/MG exposes live battery here, and its proprietary GET_BATTERY_LEVEL command is dropped by
+     * send() (only HR-toggle + buzz are framed for 5/MG) — so without this the manual refresh was a no-op
+     * on 5/MG. WHOOP 4 also answers the legacy command path, so it gets both. Mirrors macOS
+     * BLEManager.refreshBattery(). The read result arrives in onCharacteristicRead → onInbound → setBattery.
+     */
+    fun refreshBattery() {
+        val g = gatt
+        if (g == null) {
+            log("refreshBattery ignored — not connected")
+            return
+        }
+        val batt = g.getService(BATTERY_SERVICE)?.getCharacteristic(BATTERY_CHAR)
+        if (batt != null && (batt.properties and BluetoothGattCharacteristic.PROPERTY_READ) != 0) {
+            g.readCharacteristic(batt)
+            log("Reading standard Battery Level (0x2A19)")
+        } else {
+            log("Battery Level read unavailable; relying on notifications")
+        }
+        if (connectedFamily == DeviceFamily.WHOOP4) send(CommandNumber.GET_BATTERY_LEVEL)
+    }
+
     // ====================================================================================
     // MARK: Scanning
     // ====================================================================================
@@ -771,6 +794,27 @@ class WhoopBleClient(
             @Suppress("DEPRECATION")
             val value = characteristic.value ?: return
             onInbound(characteristic.uuid, value)
+        }
+
+        // Result of an explicit readCharacteristic (refreshBattery's 0x2A19 read) — route it like a
+        // notification so the existing battery handler in onInbound runs. Android 13+ passes the value.
+        override fun onCharacteristicRead(
+            g: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+            status: Int,
+        ) {
+            if (status == BluetoothGatt.GATT_SUCCESS) onInbound(characteristic.uuid, value)
+        }
+
+        @Deprecated("Deprecated in API 33; retained for API 26..32 where the value-bearing overload isn't called")
+        override fun onCharacteristicRead(
+            g: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int,
+        ) {
+            @Suppress("DEPRECATION")
+            if (status == BluetoothGatt.GATT_SUCCESS) characteristic.value?.let { onInbound(characteristic.uuid, it) }
         }
     }
 
