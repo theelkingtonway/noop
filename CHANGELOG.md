@@ -17,6 +17,19 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.20 — Strap log stays off the system log (Android)
+
+- **Changed (Android): the strap connection log is no longer mirrored to logcat by default** (PR #45).
+  It was always written to Android's system log via `Log.d` — even in release builds — so a normal user
+  emitted the device's BLE control flow to the device-wide log with no way to turn it off. It's now
+  **opt-in**: a new **Settings → Strap → "Debug logging"** toggle (default **off**, persisted as
+  `NoopPrefs.KEY_DEBUG_LOGGING`) gates the single `Log.d` call, applied to the process-wide BLE client at
+  the composition root so the low-level client never depends on the UI/prefs layer. The in-app ring
+  buffer still records unconditionally, so **"Share strap log" keeps working for everyone** (the bug-report
+  path from #17/#18) — only the adb-visible mirror is gated. Developers flip it on to watch a session over
+  `adb logcat -s WhoopBleClient`. No BLE flow, protocol, or storage change; WHOOP 4.0 and 5/MG unaffected.
+  Documented in `PRIVACY_SECURITY.md` §2.4 (what the log does/doesn't contain) and `ANDROID.md`.
+
 ## 1.19 — Import polish (Mac) + WHOOP 5 optical decode
 
 - **Changed (macOS): import buttons lock while an import runs** (follow-up to #40). While either
