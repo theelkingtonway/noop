@@ -17,6 +17,25 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.42 — Auto-reconnect to your strap on launch (Android, #67)
+
+- **NOOP reconnects to your strap automatically when the app starts** (issue #67 — jamartif: after an
+  APK update the band stayed disconnected until you tapped Connect). The process restart on an update
+  (or any cold launch) left the app disconnected because there was **no auto-connect on launch** and
+  **no persisted strap** — every `connect()` was user-tapped, and the v1.36 reconnect used an
+  in-memory device that's gone after a restart.
+  - **Persist the bonded strap**: `NoopPrefs.setLastDevice(address, model)` on the bonded transition
+    (on-device only, never sent); cleared on a model switch.
+  - **Reconnect on launch**: `AppViewModel.autoReconnectOnLaunch()` (called from `init`) →
+    `WhoopBleClient.reconnectToAddress()` does a direct `connectGatt(autoConnect=true)` to the saved
+    strap — no scan; the OS connects as soon as it's in range. Gated on **"Keep connected in the
+    background"** + a previously-bonded strap; no-ops if already connected or the runtime BT permission
+    isn't granted.
+- macOS: **version bump only.** It has the same gap (CoreBluetooth state restoration isn't actually
+  enabled — `CBCentralManager` is created without a restore identifier), but it's lower-value there (the
+  menu-bar app stays alive, updates are infrequent) and adding it needs a gating decision (no
+  keep-connected pref exists on macOS). Tracked as a follow-up.
+
 ## 1.41 — Update check shows what's new
 
 - **The "Check for updates" result now previews what's new.** When a newer version is found, the

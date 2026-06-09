@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "1.41"
+    const val CURRENT_VERSION = "1.42"
 
     data class Release(
         val version: String,
@@ -36,6 +36,14 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "1.42",
+            title = "Reconnects automatically after an update (Android)",
+            date = "June 2026",
+            items = listOf(
+                "New (Android): NOOP now reconnects to your strap automatically when the app starts — so after an app update (or any restart) you don't have to tap Connect again. It reconnects straight to the strap you last paired, as soon as it's in range, with no re-scan. Respects \"Keep connected in the background\" (turn that off if you'd rather connect by hand). Thanks to a community report (#67).",
+            ),
+        ),
         Release(
             version = "1.41",
             title = "Update check shows what's new",
