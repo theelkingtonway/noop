@@ -21,6 +21,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.noop.BuildConfig
 import com.noop.data.DemoSeeder
 import com.noop.data.WhoopRepository
@@ -52,7 +53,13 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        requestBlePermissions()
+        // Only pre-warm permissions at launch for already-onboarded users. First-run onboarding
+        // requests each permission at the step that explains it — Bluetooth when the Connect step
+        // appears, notifications when it enables the background keep-alive — so the OS prompt never
+        // lands before the screen that justifies it.
+        if (NoopPrefs.of(this).getBoolean(NoopPrefs.KEY_ONBOARDED, false)) {
+            requestBlePermissions()
+        }
 
         setContent {
             NoopTheme {
@@ -108,6 +115,11 @@ object NoopPrefs {
     /** "Keep connected in the background" — drives [com.noop.ble.WhoopConnectionService]. Default on. */
     const val KEY_BACKGROUND_CONNECTION = "noop.backgroundConnection"
 
+    /** "Debug logging" — when on, the strap log is also written to logcat (`adb`). Default OFF so a
+     *  normal user never emits the connection log to the system log; the in-app ring buffer (and the
+     *  "Share strap log" export) work regardless. See [com.noop.ble.WhoopBleClient.debugLogcat]. */
+    const val KEY_DEBUG_LOGGING = "noop.debugLogging"
+
     fun of(context: Context): SharedPreferences =
         context.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
@@ -117,6 +129,33 @@ object NoopPrefs {
 
     fun setBackgroundConnection(context: Context, enabled: Boolean) {
         of(context).edit().putBoolean(KEY_BACKGROUND_CONNECTION, enabled).apply()
+    }
+
+    /** Whether the strap log is mirrored to logcat. Default false (normal users don't log to adb). */
+    fun debugLogging(context: Context): Boolean =
+        of(context).getBoolean(KEY_DEBUG_LOGGING, false)
+
+    fun setDebugLogging(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_DEBUG_LOGGING, enabled).apply()
+    }
+
+    /** Smart alarm: arm the strap's firmware alarm to buzz at a wake time. Default off; default time 07:00. */
+    const val KEY_SMART_ALARM = "noop.smartAlarmEnabled"
+    const val KEY_SMART_ALARM_MINUTES = "noop.smartAlarmMinutes"
+
+    fun smartAlarmEnabled(context: Context): Boolean =
+        of(context).getBoolean(KEY_SMART_ALARM, false)
+
+    fun setSmartAlarmEnabled(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_SMART_ALARM, enabled).apply()
+    }
+
+    /** Wake time as minutes since midnight (default 420 = 07:00). */
+    fun smartAlarmMinutes(context: Context): Int =
+        of(context).getInt(KEY_SMART_ALARM_MINUTES, 7 * 60)
+
+    fun setSmartAlarmMinutes(context: Context, minutes: Int) {
+        of(context).edit().putInt(KEY_SMART_ALARM_MINUTES, minutes).apply()
     }
 }
 
@@ -129,6 +168,7 @@ object NoopPrefs {
 fun NoopRoot() {
     val context = LocalContext.current
     val prefs = remember { NoopPrefs.of(context) }
+    val appViewModel: AppViewModel = viewModel()
 
     var onboarded by remember {
         mutableStateOf(prefs.getBoolean(NoopPrefs.KEY_ONBOARDED, false))
@@ -139,6 +179,7 @@ fun NoopRoot() {
 
     if (!onboarded) {
         OnboardingScreen(
+            viewModel = appViewModel,
             onFinished = {
                 // A brand-new user just saw the expectations in onboarding — don't also pop the
                 // changelog at them; mark them current (mirrors macOS ContentView onFinished).
@@ -155,7 +196,7 @@ fun NoopRoot() {
 
     // Existing, onboarded user: render the app, and if they've updated since last launch
     // (stored version behind current), show "What's New" once over the top.
-    AppRoot()
+    AppRoot(viewModel = appViewModel)
 
     if (lastSeenChangelog != AppChangelog.CURRENT_VERSION) {
         Dialog(

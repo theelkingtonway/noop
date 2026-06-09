@@ -283,6 +283,12 @@ class WhoopBleClient(
     /// The strap family the user chose to pair, remembered so an auto-reconnect after a
     /// dropout re-scans for the same model instead of falling back to WHOOP 4.0.
     private var selectedModel = WhoopModel.WHOOP4
+    /// The last device we connected to, kept so an auto-reconnect after a dropout can connect
+    /// DIRECTLY to it (autoConnect=true) instead of scanning. A bonded strap the OS still holds (or
+    /// that simply isn't advertising) won't appear in a scan — so the old scan-only reconnect looped
+    /// "No WHOOP strap found" until the user forced pairing mode (#61). Mirrors macOS, which already
+    /// reconnects via retrieveConnectedPeripherals + central.connect before scanning.
+    private var lastDevice: BluetoothDevice? = null
     /// The family actually discovered on the connected peripheral. Drives family-aware frame
     /// parsing and gates the WHOOP4-only bond/handshake. Set in onServicesDiscovered.
     private var connectedFamily = DeviceFamily.WHOOP4
@@ -293,9 +299,23 @@ class WhoopBleClient(
     /** All BLE work hops onto the main looper, matching CBCentralManager(queue: .main). */
     private val handler = Handler(Looper.getMainLooper())
 
+    /**
+     * Mirror the strap log to logcat (`Log.d`). Default OFF — a normal user has no reason to write the
+     * connection log to the system log, and shouldn't have to. The in-app ring buffer below always
+     * records regardless, so the "Share strap log" export still works for everyone (issues #17/#18);
+     * this gate only controls the adb-visible `Log.d`, which is the tool developers use to watch a
+     * connection live (`adb logcat -s WhoopBleClient`). Driven by Settings → Strap → "Debug logging"
+     * (persisted as [com.noop.ui.NoopPrefs.KEY_DEBUG_LOGGING]); the value is pushed down from the
+     * composition root so this low-level client never depends on the UI/prefs layer. @Volatile because
+     * [log] runs on both the GATT binder thread and the main looper.
+     */
+    @Volatile
+    var debugLogcat: Boolean = false
+
     /** In-memory ring buffer of the strap log so it can be exported from the UI for bug reports.
-     *  `log()` writes here (under [logBuffer]'s monitor) in addition to logcat; Android's `Log.d`
-     *  isn't reachable by a normal user, which is why people couldn't share logs (issues #17/#18). */
+     *  `log()` always writes here (under [logBuffer]'s monitor); logcat mirroring is opt-in via
+     *  [debugLogcat]. Android's `Log.d` isn't reachable by a normal user, which is why the in-app
+     *  buffer + "Share strap log" exist (issues #17/#18). */
     private val logBuffer = ArrayDeque<String>()
     private val logTimeFmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
 
@@ -488,6 +508,18 @@ class WhoopBleClient(
     }
 
     /**
+     * Switch which strap we'll connect to next: drop the current strap and clear the **sticky** bond
+     * state so a newly-picked model bonds fresh. Without this, `bonded` stayed true from the first strap,
+     * which hid the strap picker and kept the scan pointed at the old family's service — so a user with
+     * both a WHOOP 4 and a 5/MG couldn't switch between them. Mirrors macOS BLEManager.prepareForModelSwitch.
+     */
+    fun prepareForModelSwitch() {
+        disconnect()
+        lastDevice = null   // don't auto-reconnect to the old strap; the next connect scans for the new model
+        _state.value = _state.value.copy(connected = false, bonded = false)
+    }
+
+    /**
      * Send a command to the strap.
      * Port of `BLEManager.send(_:payload:writeType:)` — builds the framed COMMAND packet via
      * [Framing.buildCommand] and writes it to the command characteristic (61080002).
@@ -512,10 +544,21 @@ class WhoopBleClient(
                 log("send(${cmd.name}) skipped — no WHOOP 5/MG framing for this command yet")
                 return
             }
+            // WHOOP 5/MG haptics differ from WHOOP 4.0 on BOTH the opcode AND the payload (#48, decoded
+            // from the working "maverick" app's binary). Opcode: 0x13, not RUN_HAPTICS_PATTERN=79 (a real-MG
+            // capture showed the strap rejecting 79 with COMMAND_RESPONSE result=0x03). Payload: the maverick
+            // haptic body [0x01, effects(8), loopControl(u16 LE), overallLoop] — here the "notify" preset
+            // (effects 47,152), NOT the 4.0 [patternId, loops, …]. puffinCommandFrame pads the inner to a
+            // 4-byte boundary, which this 12-byte payload needs. WHOOP 4.0 is untouched (79 + its own frame).
+            val isHaptics = cmd == CommandNumber.RUN_HAPTICS_PATTERN
+            val puffinCmd = if (isHaptics) 0x13 else cmd.rawValue
+            val puffinPayload = if (isHaptics)
+                byteArrayOf(0x01, 47, 152.toByte(), 0, 0, 0, 0, 0, 0, 0, 0, 0) else payload
             seq = (seq + 1) and 0xFF
-            val frame = Framing.puffinCommandFrame(cmd = cmd.rawValue, seq = seq, payload = payload)
+            val frame = Framing.puffinCommandFrame(cmd = puffinCmd, seq = seq, payload = puffinPayload)
             enqueueWrite(PendingWrite(frame, withResponse))
-            log("→ ${cmd.name} payload=${payload.toHex()} (puffin)")
+            val cmdNote = if (isHaptics) " cmd=0x13" else ""
+            log("→ ${cmd.name} payload=${puffinPayload.toHex()} (puffin$cmdNote)")
             return
         }
         seq = (seq + 1) and 0xFF
@@ -534,6 +577,57 @@ class WhoopBleClient(
         val n = loops.coerceIn(0, 255)
         send(CommandNumber.RUN_HAPTICS_PATTERN, byteArrayOf(2, n.toByte(), 0, 0, 0))
         log("Buzz: patternId=2 loops=$n")
+    }
+
+    /**
+     * Read the standard Battery Level characteristic (0x2A19) on demand for "Refresh battery".
+     * WHOOP 5/MG exposes live battery here, and its proprietary GET_BATTERY_LEVEL command is dropped by
+     * send() (only HR-toggle + buzz are framed for 5/MG) — so without this the manual refresh was a no-op
+     * on 5/MG. WHOOP 4 also answers the legacy command path, so it gets both. Mirrors macOS
+     * BLEManager.refreshBattery(). The read result arrives in onCharacteristicRead → onInbound → setBattery.
+     */
+    fun refreshBattery() {
+        val g = gatt
+        if (g == null) {
+            log("refreshBattery ignored — not connected")
+            return
+        }
+        val batt = g.getService(BATTERY_SERVICE)?.getCharacteristic(BATTERY_CHAR)
+        if (batt != null && (batt.properties and BluetoothGattCharacteristic.PROPERTY_READ) != 0) {
+            g.readCharacteristic(batt)
+            log("Reading standard Battery Level (0x2A19)")
+        } else {
+            log("Battery Level read unavailable; relying on notifications")
+        }
+        if (connectedFamily == DeviceFamily.WHOOP4) send(CommandNumber.GET_BATTERY_LEVEL)
+    }
+
+    /**
+     * Arm the strap's **firmware** alarm to buzz at [epochSec] (absolute UTC seconds). The strap fires
+     * at that instant even if the phone is asleep or NOOP is closed. SET_CLOCK is sent first so the
+     * strap's RTC is UTC-correct (a wrong RTC fires the alarm at the wrong wall-clock time). Payload =
+     * `[0x01] + u32 LE epoch + [0x00, 0x00]`. Port of macOS `BLEManager.armStrapAlarm`. WHOOP 4.0; on
+     * 5/MG `send()` drops it (the 5/MG command set isn't verified for this yet).
+     */
+    fun armStrapAlarm(epochSec: Long) {
+        send(CommandNumber.SET_CLOCK, setClockPayload())
+        val e = epochSec.toInt()
+        val payload = byteArrayOf(
+            0x01,
+            (e and 0xFF).toByte(),
+            ((e shr 8) and 0xFF).toByte(),
+            ((e shr 16) and 0xFF).toByte(),
+            ((e shr 24) and 0xFF).toByte(),
+            0x00, 0x00,
+        )
+        send(CommandNumber.SET_ALARM_TIME, payload)
+        log("Alarm: armed (epoch $epochSec)")
+    }
+
+    /** Clear the strap's firmware alarm. Port of macOS `BLEManager.disableStrapAlarm`. */
+    fun disableStrapAlarm() {
+        send(CommandNumber.DISABLE_ALARM, byteArrayOf(0x01))
+        log("Alarm: disarmed")
     }
 
     // ====================================================================================
@@ -573,10 +667,16 @@ class WhoopBleClient(
     }
 
     @SuppressLint("MissingPermission")
-    private fun connectToDevice(device: BluetoothDevice) {
+    private fun connectToDevice(device: BluetoothDevice, autoConnect: Boolean = false) {
         // Reset per-connection state (mirrors the Swift flags cleared on connect/disconnect).
         reset()
-        // autoConnect = false for a fast, direct connect (CoreBluetooth central.connect default).
+        // Remember the device so a later dropout can reconnect straight to it (#61).
+        lastDevice = device
+        // Close any prior/pending GATT so a direct-reconnect attempt doesn't leak the old client.
+        gatt?.close()
+        // autoConnect=false → a fast, direct connect (CoreBluetooth central.connect default), used for
+        // the scan-discovered first connect. autoConnect=true → the OS reconnects whenever the bonded
+        // strap is reachable WITHOUT needing an advertisement (used by the dropout auto-reconnect, #61).
         // TRANSPORT_LE pins the connection to BLE on dual-mode devices.
         gatt = when {
             // Pin EVERY GATT callback to the main looper. Without a handler, Android delivers
@@ -594,13 +694,13 @@ class WhoopBleClient(
             // unchanged behaviour, so no regression and no main-thread decode on those older devices.
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ->
                 device.connectGatt(
-                    context, false, gattCallback, BluetoothDevice.TRANSPORT_LE,
+                    context, autoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE,
                     BluetoothDevice.PHY_LE_1M_MASK, handler,
                 )
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ->
-                device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                device.connectGatt(context, autoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE)
             else ->
-                device.connectGatt(context, false, gattCallback)
+                device.connectGatt(context, autoConnect, gattCallback)
         }
     }
 
@@ -757,6 +857,27 @@ class WhoopBleClient(
             @Suppress("DEPRECATION")
             val value = characteristic.value ?: return
             onInbound(characteristic.uuid, value)
+        }
+
+        // Result of an explicit readCharacteristic (refreshBattery's 0x2A19 read) — route it like a
+        // notification so the existing battery handler in onInbound runs. Android 13+ passes the value.
+        override fun onCharacteristicRead(
+            g: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+            status: Int,
+        ) {
+            if (status == BluetoothGatt.GATT_SUCCESS) onInbound(characteristic.uuid, value)
+        }
+
+        @Deprecated("Deprecated in API 33; retained for API 26..32 where the value-bearing overload isn't called")
+        override fun onCharacteristicRead(
+            g: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int,
+        ) {
+            @Suppress("DEPRECATION")
+            if (status == BluetoothGatt.GATT_SUCCESS) characteristic.value?.let { onInbound(characteristic.uuid, it) }
         }
     }
 
@@ -1488,10 +1609,22 @@ class WhoopBleClient(
         cmdCharacteristic = null
 
         if (!intentionalDisconnect) {
-            log("Disconnected (status=$status); rescanning in 3s")
-            handler.postDelayed({
-                if (!intentionalDisconnect) connect(selectedModel)
-            }, RECONNECT_DELAY_MS)
+            val dev = lastDevice
+            if (dev != null) {
+                // Reconnect DIRECTLY to the strap we already know (autoConnect=true): the OS reconnects
+                // as soon as it's reachable, with no scan and no advertisement required — fixing the
+                // dropout loop where a bonded strap that wasn't advertising could never be re-found by
+                // scanning, leaving the user stuck until they forced pairing mode (#61).
+                log("Disconnected (status=$status); reconnecting directly in ${RECONNECT_DELAY_MS / 1000}s")
+                handler.postDelayed({
+                    if (!intentionalDisconnect) connectToDevice(dev, autoConnect = true)
+                }, RECONNECT_DELAY_MS)
+            } else {
+                log("Disconnected (status=$status); rescanning in ${RECONNECT_DELAY_MS / 1000}s")
+                handler.postDelayed({
+                    if (!intentionalDisconnect) connect(selectedModel)
+                }, RECONNECT_DELAY_MS)
+            }
         } else {
             log("Disconnected (intentional)")
         }
@@ -1553,7 +1686,9 @@ class WhoopBleClient(
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
     private fun log(s: String) {
-        Log.d(TAG, s)
+        // logcat is opt-in (Settings → Strap → "Debug logging"); default OFF so normal users don't
+        // emit the strap log to the system log. The in-app ring buffer below always records.
+        if (debugLogcat) Log.d(TAG, s)
         // Mirror into the in-app ring buffer (format under the lock — SimpleDateFormat isn't
         // thread-safe and log() is called from both the GATT binder thread and the main looper).
         synchronized(logBuffer) {
