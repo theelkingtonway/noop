@@ -16,6 +16,8 @@ import androidx.core.content.ContextCompat
 import com.noop.NoopApplication
 import com.noop.R
 import com.noop.ui.MainActivity
+import com.noop.widget.WidgetSnapshot
+import com.noop.widget.WidgetSnapshotStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -84,7 +86,24 @@ class WhoopConnectionService : Service() {
             combine(ble.state, repo.daysMergedFlow("my-whoop")) { state, days ->
                 val todayKey = java.time.LocalDate.now().toString()
                 state to days.lastOrNull { it.day == todayKey }?.recovery
-            }.collectLatest { (state, recovery) -> postNotification(state, recovery) }
+            }.collectLatest { (state, recovery) ->
+                postNotification(state, recovery)
+                // Feed the home-screen widget from the same stream — this service is its heartbeat
+                // while the app UI is closed. Throttled + no-op without a placed widget (the store
+                // checks both); runCatching so a Glance hiccup never tears down the connection.
+                runCatching {
+                    WidgetSnapshotStore.push(
+                        this@WhoopConnectionService,
+                        WidgetSnapshot(
+                            recoveryPct = recovery?.roundToInt(),
+                            heartRate = state.heartRate,
+                            batteryPct = state.batteryPct?.roundToInt(),
+                            connected = state.connected,
+                            updatedAtMs = System.currentTimeMillis(),
+                        ),
+                    )
+                }
+            }
         }
 
         // START_NOT_STICKY: the FGS's job is to keep this process *alive* (which it does while

@@ -17,6 +17,19 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.57 — Android home-screen widget
+
+- **New (Android): home-screen widget** — today's recovery (band-coloured 67/34), live HR and strap
+  battery, tap-to-open. New `com.noop.widget` package on Glance (`glance-appwidget:1.1.0`, the last
+  line compatible with compileSdk 34): `NoopGlanceWidget` renders purely from a SharedPreferences
+  snapshot (no BLE/DB at compose time, survives process death), `WidgetSnapshotStore.push()` throttles
+  (meaningful-change immediate, HR at most 1/min — Glance re-inflation is far heavier than a notify())
+  and no-ops when no widget is placed. Two producers: `WhoopConnectionService`'s v1.56 combine (the
+  heartbeat while the UI is closed) and `AppViewModel.recentDays` (foreground with the service off).
+  `updatePeriodMillis=0` — push-only, the OS never polls. Receiver `exported="true"` as the launcher
+  requires.
+- macOS: **version bump only.**
+
 ## 1.56 — Shortcuts on Mac, recovery in the Android notification
 
 - **New (macOS): App Intents / Shortcuts actions — "Buzz Strap" and "Mark a Moment."** New

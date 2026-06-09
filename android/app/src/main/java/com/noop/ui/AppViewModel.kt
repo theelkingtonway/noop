@@ -15,6 +15,8 @@ import com.noop.data.DailyMetric
 import com.noop.data.WhoopRepository
 import com.noop.ingest.HealthConnectImporter
 import com.noop.protocol.CommandNumber
+import com.noop.widget.WidgetSnapshot
+import com.noop.widget.WidgetSnapshotStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +27,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 /**
  * The single app-wide view model. Holds the BLE client and the Room-backed
@@ -130,6 +133,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val todayKey = java.time.LocalDate.now().toString()   // ISO yyyy-MM-dd, local
                 _today.value = days.lastOrNull { it.day == todayKey }
                 _healthAlert.value = IllnessWatch.evaluate(days)
+                // Keep the home-screen widget fresh while the app is open — covers users who turned
+                // the background service off (the service is the widget's heartbeat otherwise).
+                // Throttled + no-op without a placed widget; never let a Glance hiccup kill the collector.
+                runCatching {
+                    val live = ble.state.value
+                    WidgetSnapshotStore.push(
+                        appContext,
+                        WidgetSnapshot(
+                            recoveryPct = _today.value?.recovery?.roundToInt(),
+                            heartRate = live.heartRate,
+                            batteryPct = live.batteryPct?.roundToInt(),
+                            connected = live.connected,
+                            updatedAtMs = System.currentTimeMillis(),
+                        ),
+                    )
+                }
             }
         }
 

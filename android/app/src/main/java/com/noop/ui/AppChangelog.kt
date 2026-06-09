@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "1.56"
+    const val CURRENT_VERSION = "1.57"
 
     data class Release(
         val version: String,
@@ -36,6 +36,14 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "1.57",
+            title = "Android home-screen widget",
+            date = "June 2026",
+            items = listOf(
+                "New (Android): a home-screen widget. Today's recovery — coloured green, amber or red by the usual bands — plus live heart rate and strap battery, at a glance without opening the app. It updates from the background connection (or while the app is open), shows when it last heard from the strap, and tapping it opens NOOP. Long-press your home screen → Widgets → NOOP to add it. Honest-blank until NOOP has learned enough nights to score you. Mac: version bump only.",
+            ),
+        ),
         Release(
             version = "1.56",
             title = "Shortcuts on Mac, recovery in the Android notification",

@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NOOP</string>
+    <string name="widget_description">Today\'s recovery, live heart rate and strap battery at a glance.</string>
 </resources>
