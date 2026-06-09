@@ -17,6 +17,28 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.46 — Revived-strap history dates, gestures during sync, clearer pairing state
+
+- **Stale-strap clock correction (#72).** A strap that sat unused has a drifted RTC, so its offloaded
+  history landed months in the past — live HR worked, but recovery/strain/sleep never showed as "today."
+  `extractHistoricalStreams` now corrects type-47 + EVENT timestamps by the strap-vs-real clock offset
+  **only when the strap clock is clearly stale (>1 day off)**, snapped to a 5-min grid so the correction
+  is deterministic across re-syncs (rows dedupe by timestamp). No-op for a normal strap. Both platforms.
+- **Live gestures during a history sync (#69).** `isOffloadFrame` classed EVENT(48) as bulk-sync
+  traffic, so during a backfill a real-time double-tap / wrist event was routed to the sync handler and
+  never fired — for minutes at a time on a 5.0/MG. NOOP now fires live gestures even mid-sync, gated on
+  the event being recent **in the strap's own clock domain** (macOS) so a *replayed historical* gesture
+  from the offload doesn't fire; Android fires live gestures ungated and gates only during a backfill.
+- **"Encrypted bond" vs "live HR" indicator (#69).** On a 5.0/MG, live HR streams over the open
+  Bluetooth profile without a real encrypted bond, so the app used to say "Bonded" when it wasn't. The
+  Live pill now shows **"Bonded"** only for a genuine encrypted bond, else **"Live HR (not fully
+  paired)"** — the encrypted bond is what unlocks buzz, alarms, double-tap and history sync. The in-app
+  pairing tip now mentions tapping the band to enter 5.0/MG pairing mode. Both platforms.
+- _Known, tracked limitations:_ a strap that's both clock-stale and mid-offload may miss a double-tap
+  during that sync window on Android (no GET_CLOCK correlation to gate in the strap's clock domain); and
+  a record re-offloaded across a successful SET_CLOCK could store twice (proper fix = persist the
+  per-device offset). Both narrow.
+
 ## 1.45 — Clearer pairing guidance for WHOOP 5.0/MG (Mac, #69)
 
 - **A 5.0/MG streams live heart rate before it's fully (encrypted-)paired** — and buzz, alarms,

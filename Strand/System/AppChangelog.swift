@@ -7,7 +7,7 @@ enum AppChangelog {
 
     /// Bump this when you add a release below. The "What's New" sheet shows automatically when the
     /// stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
-    static let currentVersion = "1.45"
+    static let currentVersion = "1.46"
 
     struct Release: Identifiable {
         let version: String
@@ -19,6 +19,15 @@ enum AppChangelog {
 
     /// Newest first.
     static let releases: [Release] = [
+        Release(
+            version: "1.46",
+            title: "History dates fixed for revived straps, gestures during sync, clearer pairing",
+            date: "June 2026",
+            items: [
+                "Fixed: if your strap sat unused for a while its clock drifts, and your offloaded history was landing months in the past — live HR worked but nothing else showed up as \"today.\" NOOP now corrects the timestamps when the strap's clock is clearly stale, so your history lands on the right days. Mac and Android. Thanks to a detailed bug report (#72).",
+                "Fixed: double-tap (and wrist on/off) now keep working during a history sync. They were being swallowed while the strap offloaded its backlog — very noticeable on a WHOOP 5.0/MG, where that sync runs for minutes. Mac and Android (#69).",
+                "New: the Live screen now tells you whether you have a real encrypted pairing (\"Bonded\") or just live heart rate over the open profile (\"Live HR — not fully paired\"). The encrypted bond is what unlocks buzz, alarms, double-tap and history sync, so it's now obvious when those are available. Plus a tip on entering 5.0/MG pairing mode (tap the band). Mac and Android (#69).",
+            ]),
         Release(
             version: "1.45",
             title: "Clearer pairing guidance for WHOOP 5.0/MG",
