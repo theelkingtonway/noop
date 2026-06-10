@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.noop.analytics.Baselines
 import com.noop.analytics.ReadinessEngine
 import com.noop.data.DailyMetric
 import com.noop.data.WorkoutRow
@@ -58,7 +59,13 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
     val today by viewModel.today.collectAsStateWithLifecycle()
     val alert by viewModel.healthAlert.collectAsStateWithLifecycle()
     val days by viewModel.recentDays.collectAsStateWithLifecycle()
+    val live by viewModel.live.collectAsStateWithLifecycle()
     var footer by remember { mutableStateOf(TodayFooterState()) }
+
+    // Recovery cold-start: recovery is null until the HRV baseline crosses the seed gate
+    // (Baselines.minNightsSeed valid nights). Show honest "calibrating — N of 4 nights" progress
+    // instead of a bare "No Data" so a new BLE-only user knows scores are coming, not broken. (PR #85)
+    val recoveryCalibration: Int? = recoveryCalibrationNights(days, today?.recovery != null)
 
     // 14-day trailing calendar window ending on the phone's actual local day.
     // Old imports stay in history, but they do not fill the Today trend tiles.
@@ -79,10 +86,13 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
         val appleDaysCount = viewModel.repo.appleDaily("apple-health", "0000-01-01", "9999-12-31").size
         val hcDaysCount = viewModel.repo.appleDaily("health-connect", "0000-01-01", "9999-12-31").size
         footer = TodayFooterState(
-            recentWorkouts = (viewModel.repo.workouts("my-whoop", recentCutoff, now) +
-                viewModel.repo.workouts("apple-health", recentCutoff, now) +
-                viewModel.repo.workouts("health-connect", recentCutoff, now))
-                .sortedByDescending { it.startTs },
+            // fillWorkoutHrFromStrap: imported sessions carry no HR — derive it from strap samples (#77).
+            recentWorkouts = viewModel.repo.fillWorkoutHrFromStrap(
+                (viewModel.repo.workouts("my-whoop", recentCutoff, now) +
+                    viewModel.repo.workouts("apple-health", recentCutoff, now) +
+                    viewModel.repo.workouts("health-connect", recentCutoff, now))
+                    .sortedByDescending { it.startTs }
+            ),
             whoopDays = days.size,
             whoopWorkouts = whoopWorkouts.size,
             appleDays = appleDaysCount,
@@ -98,6 +108,8 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
         // lead with the "live now, history one import away" note so the empty tiles
         // below are explained rather than just dashed out.
         if (today?.recovery == null) {
+            // While the strap is mid-offload, say so — empty tiles read as final otherwise (#77).
+            if (live.backfilling) SyncingHistoryNote(chunks = live.syncChunksThisSession)
             DataPendingNote(
                 title = "Live now. Your scores are building.",
                 body = "Your live heart rate is working from the strap, and recovery, strain " +
@@ -129,14 +141,18 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {
             NoopCard(modifier = Modifier.weight(1f)) {
                 Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    TodayRecoveryRing(today)
+                    TodayRecoveryRing(today, recoveryCalibration)
                 }
             }
             InsightCard(
                 modifier = Modifier.weight(1f),
                 category = "Recovery",
-                status = synthesisWord(today?.recovery),
-                detail = synthesisDetail(today),
+                status = if (recoveryCalibration != null) "Calibrating" else synthesisWord(today?.recovery),
+                detail = if (recoveryCalibration != null) {
+                    "Learning your baseline — $recoveryCalibration of ${Baselines.minNightsSeed} nights."
+                } else {
+                    synthesisDetail(today)
+                },
                 statusColor = today?.recovery?.let { Palette.recoveryColor(it) } ?: Palette.textTertiary,
             )
         }
@@ -148,14 +164,15 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
         // METRICS — uniform tile grid (two columns), each tile with a 14-day sparkline.
         Spacer(Modifier.padding(top = (Metrics.sectionGap - 20.dp) / 2))
         SectionHeader("Key Metrics", overline = "Today", trailing = "14-day trend")
-        MetricGrid(today, window)
+        MetricGrid(today, window, recoveryCalibration)
+        HeartRateTrendCard(viewModel, days)
         TodayWorkoutsSection(footer.recentWorkouts)
         TodaySourcesSection(footer)
     }
 }
 
 @Composable
-private fun TodayRecoveryRing(day: DailyMetric?) {
+private fun TodayRecoveryRing(day: DailyMetric?, calibratingNights: Int? = null) {
     val hasRecovery = day?.recovery != null
     Box(contentAlignment = Alignment.Center) {
         RecoveryRing(
@@ -168,14 +185,15 @@ private fun TodayRecoveryRing(day: DailyMetric?) {
         if (!hasRecovery) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = NO_DATA,
+                    text = if (calibratingNights != null) "Calibrating" else NO_DATA,
                     style = NoopType.title2,
                     color = Palette.textTertiary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = ringSupporting(day),
+                    text = calibratingNights?.let { "$it of ${Baselines.minNightsSeed} nights" }
+                        ?: ringSupporting(day),
                     style = NoopType.footnote,
                     color = Palette.textSecondary,
                     maxLines = 1,
@@ -188,22 +206,43 @@ private fun TodayRecoveryRing(day: DailyMetric?) {
 }
 
 /**
+ * Recent nights carrying a usable nightly HRV — the signal that seeds the recovery baseline. While
+ * recovery is still null and this count is in [1, seed), it is the honest "calibrating N of <seed>"
+ * progress shown in place of "No Data"; null once recovery exists or no night has data yet. Pure +
+ * unit-tested (RecoveryCalibrationTest). Mirrors Baselines.minNightsSeed as the seed gate. (PR #85)
+ */
+internal fun recoveryCalibrationNights(
+    days: List<DailyMetric>,
+    hasRecovery: Boolean,
+    seed: Int = Baselines.minNightsSeed,
+): Int? {
+    if (hasRecovery) return null
+    // Match the baseline's validity predicate, not just non-null: Baselines.update only advances the
+    // recovery seed (nValid) for nights whose avgHrv is within the HRV config bounds, so an implausible
+    // out-of-range night must NOT be counted here either — else the displayed N could over-state nValid.
+    val cfg = Baselines.hrvCfg
+    return days.count { val v = it.avgHrv; v != null && v in cfg.minVal..cfg.maxVal }
+        .takeIf { it in 1 until seed }
+}
+
+/**
  * The full 14-day metric grid, mirroring the macOS LazyVGrid order:
  * Recovery, Day Strain, Sleep, HRV, Resting HR, Blood Oxygen, Respiratory,
  * Steps, Weight, Calories. Each tile is a fixed-height [SparkStatTile] so the
  * grid tiles perfectly with no empty cells.
  */
 @Composable
-private fun MetricGrid(d: DailyMetric?, w: Window) {
+private fun MetricGrid(d: DailyMetric?, w: Window, recoveryCalibration: Int? = null) {
     val tiles = listOf<@Composable (Modifier) -> Unit>(
         { m ->
             SparkStatTile(
                 modifier = m,
                 label = "Recovery",
-                value = d?.recovery?.let { "${it.roundToInt()}%" } ?: NO_DATA,
+                value = d?.recovery?.let { "${it.roundToInt()}%" }
+                    ?: recoveryCalibration?.let { "$it/${Baselines.minNightsSeed}" } ?: NO_DATA,
                 caption = d?.recovery?.let {
                     Palette.recoveryState(it).lowercase().replaceFirstChar { c -> c.uppercase() }
-                },
+                } ?: recoveryCalibration?.let { "Calibrating" },
                 accent = d?.recovery?.let { Palette.recoveryColor(it) } ?: Palette.textTertiary,
                 spark = w.recovery,
                 sparkColor = Palette.accent,
@@ -317,6 +356,70 @@ private fun MetricGrid(d: DailyMetric?, w: Window) {
             Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {
                 rowTiles.forEach { tile -> tile(Modifier.weight(1f)) }
                 if (rowTiles.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+// MARK: - Heart-rate trend (today's continuous HR off the strap's own ~1Hz history)
+//
+// A full-width 24h HR trend, plotted from 5-minute bucket means of the strap's hrSample history
+// (offloaded even while the app was closed, so the day reads continuously). Hidden until there are at
+// least two buckets, so a strap-only user with no wear today sees nothing rather than an empty chart.
+// Mirrors the macOS TodayView.heartRateTrendSection. LineChart spaces points by index (no time axis),
+// so the buckets — being uniform 5-min means in time order — read as an even left-to-right day curve.
+
+@Composable
+private fun HeartRateTrendCard(viewModel: AppViewModel, days: List<DailyMetric>) {
+    var buckets by remember { mutableStateOf<List<Double>>(emptyList()) }
+    // Re-load when the day list changes (a sync/import updates it), and on first composition.
+    LaunchedEffect(days) {
+        val zone = ZoneId.systemDefault()
+        val startOfToday = LocalDate.now(zone).atStartOfDay(zone).toEpochSecond()
+        val now = System.currentTimeMillis() / 1000
+        buckets = viewModel.repo.hrBuckets("my-whoop", startOfToday, now, 300L).map { it.avgBpm }
+    }
+    if (buckets.size < 2) return
+
+    val latest = buckets.last().roundToInt()
+    val min = buckets.min().roundToInt()
+    val max = buckets.max().roundToInt()
+    val avg = buckets.average().roundToInt()
+
+    SectionHeader("Heart Rate", overline = "Today")
+    NoopCard {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // Header — mirrors the macOS ChartCard (title + subtitle, trailing read-out).
+            Row(verticalAlignment = Alignment.Top) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Overline("Beats per minute")
+                    Text(
+                        "5-minute average · since midnight",
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                    )
+                }
+                Text("$latest bpm", style = NoopType.number(22f), color = Palette.metricRose)
+            }
+            LineChart(
+                values = buckets,
+                modifier = Modifier.height(Metrics.chartHeight),
+                color = Palette.metricRose,
+                fill = true,
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Palette.hairline),
+            )
+            Row(modifier = Modifier.fillMaxWidth()) {
+                listOf("Min" to min, "Avg" to avg, "Max" to max).forEach { (label, value) ->
+                    Column(modifier = Modifier.weight(1f)) {
+                        Overline(label, color = Palette.textTertiary)
+                        Text("$value", style = NoopType.bodyNumber, color = Palette.textPrimary)
+                    }
+                }
             }
         }
     }

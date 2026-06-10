@@ -23,6 +23,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.noop.BuildConfig
+import com.noop.ble.WhoopModel
 import com.noop.data.DemoSeeder
 import com.noop.data.WhoopRepository
 import kotlinx.coroutines.Dispatchers
@@ -139,6 +140,43 @@ object NoopPrefs {
         of(context).edit().putBoolean(KEY_DEBUG_LOGGING, enabled).apply()
     }
 
+    /** Health Connect periodic auto-sync (Samsung Health → Health Connect → NOOP). Default OFF.
+     *  Interval in hours (default 12). Last successful sync as epoch millis (0 = never). */
+    const val KEY_HC_AUTO_SYNC = "noop.hcAutoSync"
+    const val KEY_HC_SYNC_HOURS = "noop.hcSyncHours"
+    const val KEY_HC_LAST_SYNC = "noop.hcLastSync"
+
+    fun hcAutoSync(context: Context): Boolean =
+        of(context).getBoolean(KEY_HC_AUTO_SYNC, false)
+
+    fun setHcAutoSync(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_HC_AUTO_SYNC, enabled).apply()
+    }
+
+    fun hcSyncHours(context: Context): Int =
+        of(context).getInt(KEY_HC_SYNC_HOURS, 12)
+
+    fun setHcSyncHours(context: Context, hours: Int) {
+        of(context).edit().putInt(KEY_HC_SYNC_HOURS, hours).apply()
+    }
+
+    fun hcLastSync(context: Context): Long =
+        of(context).getLong(KEY_HC_LAST_SYNC, 0L)
+
+    fun setHcLastSync(context: Context, epochMs: Long) {
+        of(context).edit().putLong(KEY_HC_LAST_SYNC, epochMs).apply()
+    }
+
+    /** Health Connect writeback (NOOP's computed metrics → HC, for other apps). Default OFF. */
+    const val KEY_HC_WRITEBACK = "noop.hcWriteback"
+
+    fun hcWriteback(context: Context): Boolean =
+        of(context).getBoolean(KEY_HC_WRITEBACK, false)
+
+    fun setHcWriteback(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_HC_WRITEBACK, enabled).apply()
+    }
+
     /** Smart alarm: arm the strap's firmware alarm to buzz at a wake time. Default off; default time 07:00. */
     const val KEY_SMART_ALARM = "noop.smartAlarmEnabled"
     const val KEY_SMART_ALARM_MINUTES = "noop.smartAlarmMinutes"
@@ -156,6 +194,31 @@ object NoopPrefs {
 
     fun setSmartAlarmMinutes(context: Context, minutes: Int) {
         of(context).edit().putInt(KEY_SMART_ALARM_MINUTES, minutes).apply()
+    }
+
+    /** The last strap we bonded to (address + model), persisted so NOOP can reconnect to it directly on
+     *  the next launch — e.g. after an APK update restarts the process (#67). On-device only; never sent. */
+    const val KEY_LAST_DEVICE_ADDR = "noop.lastDeviceAddress"
+    const val KEY_LAST_DEVICE_MODEL = "noop.lastDeviceModel"
+
+    fun setLastDevice(context: Context, address: String, model: WhoopModel) {
+        of(context).edit()
+            .putString(KEY_LAST_DEVICE_ADDR, address)
+            .putString(KEY_LAST_DEVICE_MODEL, model.name)
+            .apply()
+    }
+
+    /** The saved strap as (address, model), or null if none has bonded yet. */
+    fun lastDevice(context: Context): Pair<String, WhoopModel>? {
+        val addr = of(context).getString(KEY_LAST_DEVICE_ADDR, null) ?: return null
+        val model = of(context).getString(KEY_LAST_DEVICE_MODEL, null)
+            ?.let { name -> runCatching { WhoopModel.valueOf(name) }.getOrNull() }
+            ?: WhoopModel.WHOOP4
+        return addr to model
+    }
+
+    fun clearLastDevice(context: Context) {
+        of(context).edit().remove(KEY_LAST_DEVICE_ADDR).remove(KEY_LAST_DEVICE_MODEL).apply()
     }
 }
 

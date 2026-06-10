@@ -8,6 +8,7 @@ import com.noop.data.RespRow
 import com.noop.data.RrRow
 import com.noop.data.SkinTempRow
 import com.noop.data.Spo2Row
+import com.noop.data.StepRow
 import com.noop.data.StreamBatch
 import com.noop.data.StreamPersistence
 
@@ -139,7 +140,16 @@ fun decodeHistorical(frame: ByteArray, family: DeviceFamily = DeviceFamily.WHOOP
     if (frame[4].toInt() and 0xFF != PacketType.HISTORICAL_DATA.rawValue) return null
 
     val version = frame[5].toInt() and 0xFF
-    val layout = histVersionLayout(version) ?: return null
+    // Unmapped firmware version: instead of dropping the whole record (→ no HR/R-R/gravity → no sleep,
+    // and on Android this previously meant ZERO data for a strap on newer firmware — the macOS
+    // issue-#30 fix that never reached Android; the likely cause of #77 on some WHOOP 4 straps), fall
+    // back to the canonical v24 DSP layout. Firmware versions overwhelmingly share it (V12 == V24). We
+    // accept the fallback ONLY if it decodes to physically-real data (validated at the end) so a wrong
+    // layout can never store garbage. Mapped versions are unaffected. Mirrors Swift PostHooks
+    // "historical_data" (PostHooks.swift). (#30 / #77)
+    val mapped = histVersionLayout(version)
+    val usingFallback = mapped == null
+    val layout = mapped ?: HIST_V24
 
     val out = LinkedHashMap<String, Any?>()
     out["hist_version"] = version
@@ -166,6 +176,19 @@ fun decodeHistorical(frame: ByteArray, family: DeviceFamily = DeviceFamily.WHOOP
     layout.gravityXOff?.let { off -> frame.histF32(off)?.let { out["gravity_x"] = it } }
     layout.gravityYOff?.let { off -> frame.histF32(off)?.let { out["gravity_y"] = it } }
     layout.gravityZOff?.let { off -> frame.histF32(off)?.let { out["gravity_z"] = it } }
+
+    // Validate the v24-layout guess for an unmapped version: gravity is the DSP-separated orientation
+    // vector, so |gravity| ≈ 1 g on a real record regardless of motion, and HR is physiological. If the
+    // guess doesn't fit this firmware the decoded values are random — drop the record rather than store
+    // garbage (same outcome as before the fallback). Mapped versions skip this entirely. (#30 / #77)
+    if (usingFallback) {
+        val gx = (out["gravity_x"] as? Double) ?: Double.NaN
+        val gy = (out["gravity_y"] as? Double) ?: Double.NaN
+        val gz = (out["gravity_z"] as? Double) ?: Double.NaN
+        val mag = Math.sqrt(gx * gx + gy * gy + gz * gz)
+        val hr = (out["heart_rate"] as? Int) ?: 0
+        if (!(mag in 0.8..1.2 && hr in 25..230)) return null
+    }
 
     return out
 }
@@ -280,10 +303,28 @@ fun extractHistoricalStreams(
 ): StreamBatch {
     fun wall(deviceTs: Int?): Int? = if (deviceTs == null) null else wallClockRef + (deviceTs - deviceClockRef)
 
+    // FIX #72: type-47 `unix` and EVENT `event_timestamp` are the strap RTC's own real-unix seconds.
+    // When the strap RTC is grossly stale (it sat unused for months, so its clock is months behind) those
+    // land far in the past — live HR works but all offloaded history is misdated. Correct them by the
+    // (wall - device) clock offset, but ONLY when grossly stale, and SNAPPED to a 5-min grid so the SAME
+    // record re-syncs to the SAME corrected ts (offloaded rows dedupe by (deviceId, ts); an un-snapped,
+    // slightly-different offset on re-sync would duplicate every row). A normal/identity clockRef has
+    // offset ~0 (< threshold) → rawTs unchanged (current behavior).
+    val staleThreshold = 86_400          // 1 day
+    val snapGranularity = 300            // 5 min
+    val clockOffset = wallClockRef - deviceClockRef
+    fun correctedWall(rawTs: Long): Long {
+        if (kotlin.math.abs(clockOffset) <= staleThreshold) return rawTs
+        val snapped = (if (clockOffset >= 0) clockOffset + snapGranularity / 2
+                       else clockOffset - snapGranularity / 2) / snapGranularity * snapGranularity
+        return rawTs + snapped.toLong()
+    }
+
     val hr = ArrayList<HrRow>()
     val rr = ArrayList<RrRow>()
     val spo2 = ArrayList<Spo2Row>()
     val skinTemp = ArrayList<SkinTempRow>()
+    val steps = ArrayList<StepRow>()
     val resp = ArrayList<RespRow>()
     val gravity = ArrayList<GravityRow>()
     val events = ArrayList<EventEntry>()
@@ -295,9 +336,10 @@ fun extractHistoricalStreams(
                 else if (frame.size > 4) frame[4].toInt() and 0xFF else -1
         when (t) {
             PacketType.HISTORICAL_DATA.rawValue -> {
-                // type-47 carries a REAL unix timestamp + the full DSP record. No wall-clock offset.
+                // type-47 carries the strap RTC's real-unix seconds. Correct for a grossly-stale RTC
+                // (FIX #72); a normal strap is unchanged (offset < threshold).
                 val p = decodeHistorical(frame, family) ?: continue
-                val ts = p.intOrNull("unix")?.toLong() ?: continue
+                val ts = (p.intOrNull("unix")?.toLong())?.let { correctedWall(it) } ?: continue
 
                 // skip startup hr=0 (matches Swift `bpm != 0`).
                 p.intOrNull("heart_rate")?.let { bpm -> if (bpm != 0) hr.add(HrRow(ts, bpm)) }
@@ -309,6 +351,10 @@ fun extractHistoricalStreams(
                     spo2.add(Spo2Row(ts, red = red, ir = p.intOrNull("spo2_ir") ?: 0))
                 }
                 p.intOrNull("skin_temp_raw")?.let { raw -> skinTemp.add(SkinTempRow(ts, raw)) }
+                // step_motion_counter@57 is the WHOOP5 CUMULATIVE u16 counter (decoded but, until now,
+                // dropped). Stored raw; AnalyticsEngine derives the daily step total from counter deltas.
+                // APPROXIMATE — @57 semantics unverified vs the official app (see decodeWhoop5Historical). (#78)
+                p.intOrNull("step_motion_counter")?.let { c -> steps.add(StepRow(ts, c)) }
                 p.intOrNull("resp_rate_raw")?.let { raw -> resp.add(RespRow(ts, raw)) }
                 p.doubleOrNull("gravity_x")?.let { gx ->
                     gravity.add(
@@ -338,13 +384,14 @@ fun extractHistoricalStreams(
             }
 
             PacketType.EVENT.rawValue -> {
-                // EVENT timestamps are real RTC unix seconds — already wall-clock, NOT offset.
-                // Port of the Swift `case "EVENT"` branch: persist the event (with battery extracted
-                // for BATTERY_LEVEL) so offloaded wrist/charge/battery events aren't lost. During a
-                // backfill the live path is suppressed, so the offload extractor MUST handle these.
+                // EVENT carries the strap RTC's real-unix seconds. Correct for a grossly-stale RTC
+                // (FIX #72); a normal strap is unchanged. Port of the Swift `case "EVENT"` branch:
+                // persist the event (with battery extracted for BATTERY_LEVEL) so offloaded
+                // wrist/charge/battery events aren't lost. During a backfill the live path is
+                // suppressed, so the offload extractor MUST handle these.
                 val parsed = Framing.parseFrame(frame, family)
                 if (!parsed.ok || parsed.crcOk == false) continue
-                val ts = parsed.parsed.intOrNull("event_timestamp")?.toLong() ?: continue
+                val ts = (parsed.parsed.intOrNull("event_timestamp")?.toLong())?.let { correctedWall(it) } ?: continue
                 val kind = (parsed.parsed["event"] as? String) ?: ""
                 if (kind.startsWith("BATTERY_LEVEL")) appendHistBattery(battery, ts, parsed.parsed)
                 val payload = LinkedHashMap(parsed.parsed)
@@ -366,7 +413,7 @@ fun extractHistoricalStreams(
 
     return StreamBatch(
         hr = hr, rr = rr, events = events, battery = battery,
-        spo2 = spo2, skinTemp = skinTemp, resp = resp, gravity = gravity,
+        spo2 = spo2, skinTemp = skinTemp, resp = resp, gravity = gravity, steps = steps,
     )
 }
 

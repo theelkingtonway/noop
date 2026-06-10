@@ -11,6 +11,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,6 +65,7 @@ import com.noop.BuildConfig
 import com.noop.analytics.Zones
 import com.noop.ble.PuffinExperiment
 import com.noop.data.DataBackup
+import com.noop.update.UpdateCheck
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -179,6 +182,7 @@ fun SettingsScreen(vm: AppViewModel) {
     // SharedPreferences isn't reactive, so the Switch drives a local mutableState that the store reads.
     val puffinExperiment = remember { PuffinExperiment.from(context) }
     var puffinExperiments by remember { mutableStateOf(puffinExperiment.isEnabled) }
+    var puffinCapture by remember { mutableStateOf(puffinExperiment.isCaptureEnabled) }
 
     // "Keep connected in the background" — drives WhoopConnectionService (foreground service). Default
     // on. SharedPreferences isn't reactive, so the Switch mirrors into a local state.
@@ -487,6 +491,46 @@ fun SettingsScreen(vm: AppViewModel) {
                     style = NoopType.caption,
                     color = Palette.textTertiary,
                 )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Record 5/MG raw capture (research)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = puffinCapture,
+                        onCheckedChange = {
+                            puffinCapture = it
+                            puffinExperiment.isCaptureEnabled = it
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Record 5/MG raw capture"
+                        },
+                    )
+                }
+                Text(
+                    "Records the raw frames of each 5/MG history sync to a file on this phone, so you can share them and help NOOP learn to decode 5/MG sleep, recovery and strain. The file contains raw biometric frames (heart rate, R-R, skin temperature, motion) and the strap's own diagnostic text. Nothing leaves the phone unless you share it. Off by default.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+                OutlinedButton(
+                    onClick = { LogExport.shareWhoop5Capture(context) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.textSecondary),
+                ) { Text("Share 5/MG capture (for the decode effort)", style = NoopType.captionNumber) }
             }
         }
 
@@ -552,6 +596,100 @@ fun SettingsScreen(vm: AppViewModel) {
                 ) {
                     Text("NOOP", style = NoopType.title2, color = Palette.textPrimary)
                     StatePill("v${BuildConfig.VERSION_NAME}", tone = StrandTone.Neutral, showsDot = false)
+                }
+
+                // Check for updates — a single, user-initiated call to GitHub's public releases API
+                // when the button is tapped. No background polling, no auto-update; nothing about you
+                // is sent. Android already holds INTERNET (for the opt-in Coach), so this adds nothing.
+                var updChecking by remember { mutableStateOf(false) }
+                var updResult by remember { mutableStateOf<UpdateCheck.Result?>(null) }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                if (!updChecking) {
+                                    updChecking = true
+                                    updResult = null
+                                    scope.launch {
+                                        updResult = UpdateCheck.check(BuildConfig.VERSION_NAME)
+                                        updChecking = false
+                                    }
+                                }
+                            },
+                            enabled = !updChecking,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.accent),
+                        ) {
+                            if (updChecking) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp).padding(end = 6.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Palette.accent,
+                                )
+                                Text("Checking…", style = NoopType.captionNumber)
+                            } else {
+                                Text("Check for updates", style = NoopType.captionNumber)
+                            }
+                        }
+                        when (val r = updResult) {
+                            is UpdateCheck.Result.UpToDate ->
+                                Text(
+                                    "You're on the latest (${r.version}).",
+                                    style = NoopType.footnote, color = Palette.textSecondary,
+                                )
+                            UpdateCheck.Result.Failed ->
+                                Text(
+                                    "Couldn't check. Try again.",
+                                    style = NoopType.footnote, color = Palette.statusWarning,
+                                )
+                            else -> {}
+                        }
+                    }
+
+                    // Update available: show what's new, with a download straight to the release.
+                    (updResult as? UpdateCheck.Result.Available)?.let { avail ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Palette.surfaceInset)
+                                .border(1.dp, Palette.accent.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Version ${avail.version} is available",
+                                    style = NoopType.subhead, color = Palette.textPrimary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Button(
+                                    onClick = {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(avail.url)))
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Palette.accent, contentColor = Palette.surfaceBase,
+                                    ),
+                                ) { Text("Download", style = NoopType.captionNumber) }
+                            }
+                            if (avail.notes.isNotEmpty()) {
+                                Text(
+                                    avail.notes,
+                                    style = NoopType.footnote, color = Palette.textSecondary,
+                                    modifier = Modifier
+                                        .heightIn(max = 160.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        "Checks GitHub for the latest version when you tap — nothing else is sent.",
+                        style = NoopType.footnote, color = Palette.textTertiary,
+                    )
                 }
 
                 Text(

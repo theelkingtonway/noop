@@ -7,7 +7,7 @@ enum AppChangelog {
 
     /// Bump this when you add a release below. The "What's New" sheet shows automatically when the
     /// stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
-    static let currentVersion = "1.37"
+    static let currentVersion = "1.66"
 
     struct Release: Identifiable {
         let version: String
@@ -19,6 +19,214 @@ enum AppChangelog {
 
     /// Newest first.
     static let releases: [Release] = [
+        Release(
+            version: "1.66",
+            title: "Android: WHOOP 4 on newer firmware now records data",
+            date: "June 2026",
+            items: [
+                "Fixed (Android): a WHOOP 4.0 on a firmware version NOOP hadn't mapped recorded NOTHING — the history sync finished but every record was silently dropped, so heart rate, sleep and recovery all stayed empty. Mac already handled this (it falls back to the standard record layout for unknown firmware); Android didn't, so it dropped the data entirely. Android now does the same fallback, accepting an unmapped firmware's records only when they decode to physically-real data (so it can never store garbage). If your WHOOP 4 was syncing but showing no data, update and it should start filling in. Investigating exactly this on a Samsung report (#77). Mac: version bump only.",
+            ]),
+        Release(
+            version: "1.65",
+            title: "Sync diagnostics: surfacing silently-dropped history",
+            date: "June 2026",
+            items: [
+                "Diagnostics (Mac and Android): if a chunk of history arrives from the strap but none of it can be decoded — frames failing their checksum, an unrecognised firmware layout, or out-of-range timestamps — NOOP now says so plainly in the strap log instead of quietly moving on. Until now a sync like that looked completely healthy (\"history synced\") while the data went nowhere, which made a rare \"I wore it but got no data\" report almost impossible to diagnose. This release changes no behaviour — it just makes that case visible — so if your history isn't showing up, turning on Debug logging and sharing your strap log will now point straight at the cause. Investigating a report along these lines (#77).",
+            ]),
+        Release(
+            version: "1.64",
+            title: "Android: faster sync, skin temp, sync status, alarm groundwork",
+            date: "June 2026",
+            items: [
+                "New (Android): a batch of WHOOP 5/MG improvements, with thanks to a community contributor. Sync is faster and more reliable — NOOP now negotiates a larger Bluetooth packet size on connect, so a full history record rides one packet instead of being chopped into fragments. The Live screen now tells you the honest truth about syncing: \"History synced N ago,\" or a clear note if a sync stalled — no more silent guessing for a cloud-free app. Skin-temperature deviation now builds offline from the strap's own nights (wear-gated, in-bed only, baseline-seeded like recovery — APPROXIMATE), which also re-arms the illness early-warning signal. And the recovery ring now shows \"Calibrating — N of 4 nights\" while it learns your baseline, instead of a blank \"No Data.\" Also groundwork for a 5/MG firmware wake alarm — it's behind the Experimental toggle and UNCONFIRMED (help us verify it actually wakes you before relying on it). Mac: version bump only.",
+            ]),
+        Release(
+            version: "1.63",
+            title: "Mac: strap-computed nights show in Sleep",
+            date: "June 2026",
+            items: [
+                "Fixed (Mac): nights computed from the strap alone were missing from the Sleep tab entirely — Intelligence scored them, but Sleep showed nothing (#77). The strap's on-device analysis stores its stage data in a different shape than a WHOOP import, and the Sleep tab only knew how to read the imported one. Bonus of the fix: Bluetooth-only nights now draw their REAL stage timeline in the hypnogram (imported nights still use an approximate reconstruction, since the export carries totals only). The usual honesty note applies: on-device stages are approximations from heart rate, HRV and movement — not PSG-validated. Android already handled both shapes; version bump only there.",
+            ]),
+        Release(
+            version: "1.62",
+            title: "WHOOP 5/MG history: the missing clock",
+            date: "June 2026",
+            items: [
+                "New (Mac and Android, experimental): NOOP now sets the clock on a WHOOP 5.0/MG before asking for its history — and that matters more than it sounds: an un-clocked WHOOP 5 doesn't save sensor data at all, so history syncs were \"succeeding\" with nothing in them. A fellow developer's work on real 5/MG hardware found this (history went from 0 to hundreds of frames once clocked) along with several smaller protocol fixes NOOP now carries: the history request waits for the strap to acknowledge a range query first (with a retry if it stays silent), an Android 5/MG connects directly to the strap your phone already paired instead of re-scanning, fresh history is scored within seconds instead of at the next 15-minute tick, and the strap's own diagnostic messages now appear in the strap log. Also new (Android, opt-in, default OFF): \"Record 5/MG raw capture\" in Settings → Experimental writes each history sync's raw frames to a shareable file — if you have a 5/MG, sharing one capture is the single most useful thing you can do to help NOOP learn to decode 5/MG sleep, recovery and strain. With thanks to tajchert, whose hardware-validated fork drove this release.",
+            ]),
+        Release(
+            version: "1.61",
+            title: "Android: the widget now actually updates",
+            date: "June 2026",
+            items: [
+                "Fixed (Android): the home-screen widget could freeze on \"—\" for heart rate and battery while the app itself streamed live HR perfectly well (#82, second find). The widget update was being cancelled mid-write every time a new heart-rate sample arrived — and with samples landing every second, no update ever finished once streaming started. Updates now run to completion, and the first heart-rate sample after connecting shows on the widget immediately instead of waiting out a refresh window. Thanks to the reporter whose precise symptoms — live HR fine in the app, widget stuck with \"Connected\" underneath — pointed straight at it. Mac: version bump only.",
+            ]),
+        Release(
+            version: "1.60",
+            title: "Android: notification recovery fix + widget armour",
+            date: "June 2026",
+            items: [
+                "Fixed (Android): the background notification now actually shows today's Recovery % — v1.56 announced it, but the value was computed and never drawn. Also: armour for the home-screen widget — if it ever fails to draw it shows a small fallback message and heals on its next update, the background notification now survives database hiccups instead of taking the connection down, and the widget's internal scheduler library was brought up to the current Android-14-era version. We investigated a reported \"app keeps stopping\" crash (#82) with a fresh-install reproduction on a clean Android 14 device and could not trigger it — if you ever see it, please report your device model and Android version. Mac: version bump only.",
+            ]),
+        Release(
+            version: "1.59",
+            title: "Android: share back to Health Connect",
+            date: "June 2026",
+            items: [
+                "New (Android, opt-in): NOOP can now write the nightly metrics it computes from your strap — resting heart rate, HRV, SpO₂ and respiratory rate — into Health Connect, so other apps can use them. Off by default; flip \"Share back to Health Connect\" in Data Sources and grant the write permissions. Only NOOP's own computed values are written (imported data is never echoed back), and re-writes update in place rather than stacking duplicates. Mac: version bump only.",
+            ]),
+        Release(
+            version: "1.58",
+            title: "Android: bottom tab bar",
+            date: "June 2026",
+            items: [
+                "New (Android): a bottom tab bar — Today, Trends, Live and Sleep are now one thumb-tap away, with a More tab that opens the full grouped list of screens. Nothing moved: the hamburger menu still works exactly as before, every screen is reachable from both, and your back button behaves the same. Mac: version bump only.",
+            ]),
+        Release(
+            version: "1.57",
+            title: "Android home-screen widget",
+            date: "June 2026",
+            items: [
+                "New (Android): a home-screen widget. Today's recovery — coloured green, amber or red by the usual bands — plus live heart rate and strap battery, at a glance without opening the app. It updates from the background connection (or while the app is open), shows when it last heard from the strap, and tapping it opens NOOP. Long-press your home screen → Widgets → NOOP to add it. Honest-blank until NOOP has learned enough nights to score you. Mac: version bump only.",
+            ]),
+        Release(
+            version: "1.56",
+            title: "Shortcuts on Mac, recovery in the Android notification",
+            date: "June 2026",
+            items: [
+                "New (Mac): NOOP now offers two Shortcuts actions — \"Buzz Strap\" and \"Mark a Moment\" — so you can vibrate your connected strap or drop a timestamped marker from Shortcuts, Spotlight, or a menu-bar/keyboard trigger without opening the app's window. They act on the strap NOOP is already bonded to; if NOOP isn't running, or the strap isn't connected, you get a clear \"open NOOP\" / \"connect your strap\" message instead of a silent no-op. No new permissions — just the strap you already paired.",
+                "New (Android): the ongoing background notification now shows today's recovery % alongside live heart rate and strap battery, so a glance at your shade tells you how recovered you are without opening the app. It updates itself when the on-device analysis recomputes (about every 15 minutes), and stays absent until NOOP has learned enough nights to score you honestly.",
+            ]),
+        Release(
+            version: "1.55",
+            title: "Mac: recovery builds from your strap alone",
+            date: "June 2026",
+            items: [
+                "New (Mac): recovery now builds from the strap's own offloaded nights, no WHOOP export needed — the same fix Android got in v1.53. The recovery baseline previously only learned from imported history, so a Bluetooth-only Mac user never crossed the \"learn your baseline\" threshold and recovery stayed blank. NOOP now seeds the baseline from the nights it computes on-device too, so after about four nights recovery lights up on its own. Honest-blank until then; a real import still wins per day. Also: the WHOOP 5.0/MG step counter now persists on Mac (parity with Android — surfaced later, still APPROXIMATE). Android: version bump only (it already had both).",
+            ]),
+        Release(
+            version: "1.54",
+            title: "French WHOOP exports now import",
+            date: "June 2026",
+            items: [
+                "Fixed: French WHOOP CSV exports now import. Like German and Spanish before it, a French export translates both the column headers (Score de récupération, Variabilité de la fréquence cardiaque, …) and the sleep/workout filenames (sommeil.csv, entrainements.csv), so it used to match nothing and reported \"0 items.\" NOOP now maps every French column — including the full workout set with HR zones — and recognises the French filenames, so recovery, strain, sleep, HRV and workouts all import. Mac and Android. Thanks to a reporter who supplied a real export's headers (#79).",
+            ]),
+        Release(
+            version: "1.53",
+            title: "Recovery builds from your strap alone (Android)",
+            date: "June 2026",
+            items: [
+                "New (Android): recovery now builds from the strap's own offloaded nights — no WHOOP export needed. Before, the recovery baseline only ever learned from imported history, so a Bluetooth-only user never crossed the \"learn your baseline\" threshold and recovery stayed blank forever. NOOP now seeds the baseline from the nights it computes on-device too, so after about four nights of wear recovery lights up on its own. It stays honestly blank until then, and a real WHOOP import still wins per day. The natural payoff of the v1.52 offload work. Thanks to a community contribution (#78). (macOS recovery-seeding parity is a follow-up; version bump only this release.)",
+            ]),
+        Release(
+            version: "1.52",
+            title: "WHOOP 5.0/MG history offload (Android)",
+            date: "June 2026",
+            items: [
+                "New (Android, experimental): a WHOOP 5.0/MG can now offload its stored history, not just stream live HR — the same thing the Mac already did. The 5/MG Bluetooth envelope shifts every field by 4 bytes and its end-of-history marker is a different type than the 4.0's, so the app was silently dropping every \"history finished\" frame and the strap never released its records. NOOP now reads those frames at the right place (matching the Mac), so history can download and feed recovery, strain and sleep. If you have a 5.0/MG, please report whether your history populates — it's experimental until confirmed on more straps. Thanks to a community contribution (#78). (macOS: version bump only — it already had this.)",
+            ]),
+        Release(
+            version: "1.51",
+            title: "True battery %, a sync indicator, and HR on imported workouts",
+            date: "June 2026",
+            items: [
+                "Fixed: the battery flashing 100% before correcting to the real value (and sometimes reverting to 100%). A WHOOP 4.0's standard Bluetooth battery characteristic is a stub that always says 100 — the real charge comes from the proprietary battery command — and NOOP read both. It now uses only the real source per strap model. Mac and Android (#77).",
+                "New: a pulsing \"Syncing strap history…\" indicator on Today, Sleep and Intelligence while the strap's history is offloading — with a live chunk count — so a half-loaded screen (\"No nights here yet\") reads as in-progress, not final. The Live pill shows \"Bonded · syncing\" too. Mac and Android (#77).",
+                "Fixed (Android): imported workouts showed no heart rate. Health Connect sessions carry no summary HR, so avg/max were stored empty — the importer now derives them from the heart-rate samples inside each workout's window, and the Workouts/Today lists also fall back to the strap's own recorded HR for any imported session it was worn through (#77).",
+            ]),
+        Release(
+            version: "1.50",
+            title: "Steadier Bluetooth on congested Android phones",
+            date: "June 2026",
+            items: [
+                "Fixed (Android): on phones whose Bluetooth stack gets congested (a Pixel 7 on Android 16 logged dozens of \"busy\" command retries and a few dropped commands in 10 minutes), NOOP now retries a busy command more times with an escalating wait so nothing hard-drops, and re-subscribes the live channels at most once per quiet spell instead of every 30 seconds — that repeated re-subscribing was flooding the link with writes that collide with commands on phones that only allow one Bluetooth operation at a time. Steadier live HR and fewer dropped commands as a result. macOS: version bump only (it uses CoreBluetooth's own queue and isn't affected).",
+            ]),
+        Release(
+            version: "1.49",
+            title: "Spanish WHOOP exports now import",
+            date: "June 2026",
+            items: [
+                "Fixed: Spanish WHOOP CSV exports now import. A Spanish export translates both the column headers (Puntuación de recuperación, Variabilidad de la frecuencia cardíaca, and so on) and some filenames (sueño.csv, entrenamientos.csv), so it used to match nothing and reported \"Imported 0 items.\" NOOP now maps the Spanish columns to their canonical fields and recognises the Spanish filenames, so recovery, strain, sleep, HRV and the rest come through correctly. Mac and Android. Thanks to a reporter who supplied a real export's headers (#76) — the same way German was added.",
+            ]),
+        Release(
+            version: "1.48",
+            title: "More reliable Bluetooth on newer Android phones",
+            date: "June 2026",
+            items: [
+                "Fixed (Android): on some phones — especially newer ones on Android 13+, and worst on Android 16 — NOOP could silently drop a Bluetooth command when the phone's Bluetooth stack was momentarily busy, instead of retrying it. The dropped command was often the one that starts live heart rate, sets the strap clock, or acknowledges a chunk of history — so live HR sometimes never started and overnight data didn't come through, even though the strap and pairing were fine. NOOP now retries a rejected command and paces the writes so the stack keeps up. Thanks to a detailed strap log from a Pixel 7 on Android 16 (#77). (macOS: version bump only — it uses CoreBluetooth's own write queue and was never affected.)",
+            ]),
+        Release(
+            version: "1.47",
+            title: "Auto-sync Health Connect (Android)",
+            date: "June 2026",
+            items: [
+                "New (Android): an opt-in auto-sync for Health Connect. Turn it on under Data Sources → Health Connect and NOOP re-pulls new data (e.g. from a Samsung Galaxy Watch via Samsung Health) each time you open it, if it's been longer than your chosen 6 / 12 / 24h interval. Read-only, never overwrites your strap data, default OFF. Thanks to a community contribution. (macOS: version bump only.)",
+            ]),
+        Release(
+            version: "1.46",
+            title: "History dates fixed for revived straps, gestures during sync, clearer pairing",
+            date: "June 2026",
+            items: [
+                "Fixed: if your strap sat unused for a while its clock drifts, and your offloaded history was landing months in the past — live HR worked but nothing else showed up as \"today.\" NOOP now corrects the timestamps when the strap's clock is clearly stale, so your history lands on the right days. Mac and Android. Thanks to a detailed bug report (#72).",
+                "Fixed: double-tap (and wrist on/off) now keep working during a history sync. They were being swallowed while the strap offloaded its backlog — very noticeable on a WHOOP 5.0/MG, where that sync runs for minutes. Mac and Android (#69).",
+                "New: the Live screen now tells you whether you have a real encrypted pairing (\"Bonded\") or just live heart rate over the open profile (\"Live HR — not fully paired\"). The encrypted bond is what unlocks buzz, alarms, double-tap and history sync, so it's now obvious when those are available. Plus a tip on entering 5.0/MG pairing mode (tap the band). Mac and Android (#69).",
+            ]),
+        Release(
+            version: "1.45",
+            title: "Clearer pairing guidance for WHOOP 5.0/MG",
+            date: "June 2026",
+            items: [
+                "Improved (Mac): live heart rate on a WHOOP 5.0/MG streams even before the strap is fully paired — but buzz, alarms, double-tap and full history sync all need that real pairing. NOOP now keeps the \"free the strap from the WHOOP app\" guidance visible (in clearer wording) whenever the strap isn't fully paired, so it's obvious what to do to unlock the rest. Thanks to a 5.0/MG report (#69).",
+            ]),
+        Release(
+            version: "1.44",
+            title: "Fixes a false \"pairing refused\" warning (Mac)",
+            date: "June 2026",
+            items: [
+                "Fixed (Mac): the \"Pairing refused\" banner could stay up on the Live screen even after your strap had bonded and live heart rate was streaming — a stale warning on a connection that was actually fine. It now clears the moment the link bonds. Thanks to a 5.0/MG report (#69).",
+            ]),
+        Release(
+            version: "1.43",
+            title: "Your whole day's heart rate, on the dashboard",
+            date: "June 2026",
+            items: [
+                "New: Control Center now shows a 24-hour heart-rate trend — your continuous heart rate across today, read straight from the strap's own history (so it's there even for the hours the app was closed, not just while it's open). It plots 5-minute averages with the day's low, average and high underneath. Mac and Android. Thanks to the requests on Reddit.",
+            ]),
+        Release(
+            version: "1.42",
+            title: "Reconnects automatically after an update (Android)",
+            date: "June 2026",
+            items: [
+                "New (Android): NOOP now reconnects to your strap automatically when the app starts — so after an app update (or any restart) you don't have to tap Connect again. It reconnects straight to the strap you last paired, as soon as it's in range, with no re-scan. Respects \"Keep connected in the background\" (turn that off if you'd rather connect by hand). Thanks to a community report (#67).",
+            ]),
+        Release(
+            version: "1.41",
+            title: "Update check shows what's new",
+            date: "June 2026",
+            items: [
+                "Small follow-up: when Check for updates finds a newer version, it now shows what's new in it right there in Settings → About — so you can see what you're getting before you tap Download.",
+            ]),
+        Release(
+            version: "1.40",
+            title: "Check for updates",
+            date: "June 2026",
+            items: [
+                "New: a Check for updates button in Settings → About. It asks GitHub for the latest version and, if there's a newer one, links you straight to the download — so you're not stuck on an old build. It runs ONLY when you tap it: no background checks, no auto-updating, and nothing about you is sent — it just reads the latest version number. Manual, and in your control. (On Mac this is the first thing that touches the network; it stays dormant until you tap the button.)",
+            ]),
+        Release(
+            version: "1.39",
+            title: "Wrist alerts for incoming calls (Android)",
+            date: "June 2026",
+            items: [
+                "New (Android): buzz your strap when a call comes in — regular phone calls and supported VoIP apps — with its own Calls section in Notifications settings, separate from app alerts. The call buzz repeats a few times then stops, so you won't miss it. Privacy-first as always: NOOP never reads the number, the caller, or any notification content — only that a call is ringing; the Phone-calls permission is requested only when you turn that toggle on. Thanks to a community contributor (#66).",
+            ]),
+        Release(
+            version: "1.38",
+            title: "Smoother during long history syncs (Mac)",
+            date: "June 2026",
+            items: [
+                "Improved (Mac): NOOP stays responsive while your strap syncs a long stretch of history and while the dashboard recomputes. Sync data is now handled as bulk traffic — drained in small batches and kept out of the live UI parser — the strap log no longer floods with a line for every sync acknowledgement, and the heavy recovery/strain/sleep analysis runs off the main thread. So the app no longer hitches during a big offload. Thanks to a community contributor (#64, #65).",
+            ]),
         Release(
             version: "1.37",
             title: "New first-run onboarding (Mac + Android)",

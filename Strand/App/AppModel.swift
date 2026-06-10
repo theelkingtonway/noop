@@ -14,6 +14,11 @@ enum DataSourceImportKind {
 /// in later milestones.
 @MainActor
 final class AppModel: ObservableObject {
+    /// The live instance, so an AppIntent (Shortcuts) can reach the bonded strap rather than spinning
+    /// up a dead second AppModel (which would start a duplicate BLE engine and never buzz). Set in
+    /// init(); `weak` so an intent fired while NOOP is closed sees nil and asks the user to open it. (#42)
+    static weak var shared: AppModel?
+
     /// Shared device id for both live capture (BLEManager) and imported history.
     let deviceId = "my-whoop"
     /// Source id for imported Apple Health data (stored beside Whoop for per-source pages + consensus).
@@ -104,9 +109,21 @@ final class AppModel: ObservableObject {
             guard let self, bonded, self.behavior.smartAlarmEnabled else { return }
             self.applySmartAlarm()
         }.store(in: &hrCancellables)
+        // A completed backfill has just written strap history. Refresh the dashboard cache,
+        // but leave heavyweight analysis to its own guarded/background-friendly path.
+        live.$lastSyncedAt
+            .dropFirst()
+            .compactMap { $0 }
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                Task { [weak self] in await self?.refreshAfterCompletedBackfill() }
+            }
+            .store(in: &hrCancellables)
 
         moments = (UserDefaults.standard.array(forKey: "moments") as? [Double] ?? [])
             .map { Date(timeIntervalSince1970: $0) }
+
+        AppModel.shared = self   // publish for App Intents (Shortcuts) — see the static above (#42)
 
         // Turn the strap's offloaded raw data into dashboard scores on launch and every 15
         // minutes, so recovery / strain / sleep populate from the strap itself with no import.
@@ -120,6 +137,11 @@ final class AppModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 900_000_000_000)  // 15 min, matches the offload cadence
             }
         }
+    }
+
+    private func refreshAfterCompletedBackfill() async {
+        live.append(log: "Backfill: refreshing dashboard cache from completed sync")
+        await repo.refresh(days: 120)
     }
 
     /// Fold a fresh reading into the smoothing window and republish a stable bpm.
