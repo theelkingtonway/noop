@@ -17,6 +17,38 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.64 — Android: MTU 247, skin-temp, sync status, recovery UI, alarm groundwork (thanks iHateSubscriptions, #85)
+
+Reimplemented (NoopApp-authored, per our external-contribution policy) from PR #85, rebased on v1.62.
+Reviewed part-by-part against current main + the objectivity discipline. **Adopted 4, modified 1, held 1.**
+
+- **MTU 247 (adopt):** negotiate a larger ATT MTU on connect *before* service discovery — the default
+  23 caps notifications at 20 bytes and fragments the type-47 offload. Gated discovery on
+  `onMtuChanged` with a fallback timeout (a stack that ignores `requestMtu` can't stall connect); the
+  once-only discovery kick is an `AtomicBoolean.compareAndSet` (API 26/27 deliver these callbacks on
+  binder-pool threads, so the timeout and `onMtuChanged` race).
+- **Sync status (adopt):** `lastSyncAt`/`lastSyncError` on `LiveState`, stamped in `exitBackfilling`
+  by reason (`HISTORY_COMPLETE` → "History synced N ago"; `timeout` → a non-silent stalled-sync note).
+  Pure `relativeAgo` helper + tests. Honest sync truth for a cloud-free app.
+- **Skin-temp deviation, offline (adopt):** `AnalyticsEngine.wornNightlySkinTempC` (wear-gated —
+  HR-concurrent, in-bed only, 28–42 °C so on-charger ambient drift can't poison the mean) feeds a
+  two-pass personal baseline in `IntelligenceEngine` (mirrors avgHrv→recovery), re-deriving
+  `skinTempDevC` — which re-arms the illness skin-temp signal. `/100` scale, APPROXIMATE.
+- **Recovery cold-start UI (adopt):** `recoveryCalibrationNights` (counts nights with in-bounds HRV,
+  matching `Baselines.update`'s validity predicate) → "Calibrating — N of 4 nights" on the ring,
+  header and tile instead of a bare "No Data."
+- **Named maverick buzz refactor (HELD):** **review catch** — the PR's `notificationBuzz(loops=1)`
+  sets the `overallLoop` byte to 1, but our shipped golden frame
+  (`…0113012f98…00…`, harshavin hardware-confirmed) has it **0**. The buzz already works; changing a
+  proven payload for a refactor is regression risk for zero user value. Kept our inline buzz.
+- **5/MG firmware alarm (MODIFIED — experimental-gated):** adopted `AlarmPayload` (`SET_ALARM_TIME`
+  rev4 + `DISABLE_ALARM` rev2) + byte-exact tests, and wired `armStrapAlarm`/`disableStrapAlarm` for
+  5/MG. But the rev4 layout is **unconfirmed on our side** (no captured `STRAP_DRIVEN_ALARM_EXECUTED`)
+  and our own notes deferred it — so arming is **gated behind the Experimental probes opt-in**, not
+  the plain smart-alarm toggle: a normal user can never rely on an alarm that might silently not fire,
+  while opted-in testers can verify it. (`SET_ALARM_TIME`/`DISABLE_ALARM` added to the 5/MG allowlist.)
+- macOS: **version bump only.**
+
 ## 1.63 — Mac: strap-computed nights show in Sleep (#77)
 
 - **Fixed (macOS): BLE-computed nights vanished from the Sleep tab** (found from RolandGao's #77

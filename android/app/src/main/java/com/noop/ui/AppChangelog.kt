@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "1.63"
+    const val CURRENT_VERSION = "1.64"
 
     data class Release(
         val version: String,
@@ -36,6 +36,14 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "1.64",
+            title = "Android: faster sync, skin temp, sync status, alarm groundwork",
+            date = "June 2026",
+            items = listOf(
+                "New (Android): a batch of WHOOP 5/MG improvements, with thanks to a community contributor. Sync is faster and more reliable — NOOP now negotiates a larger Bluetooth packet size on connect, so a full history record rides one packet instead of being chopped into fragments. The Live screen now tells you the honest truth about syncing: \"History synced N ago,\" or a clear note if a sync stalled — no more silent guessing for a cloud-free app. Skin-temperature deviation now builds offline from the strap's own nights (wear-gated, in-bed only, baseline-seeded like recovery — APPROXIMATE), which also re-arms the illness early-warning signal. And the recovery ring now shows \"Calibrating — N of 4 nights\" while it learns your baseline, instead of a blank \"No Data.\" Also groundwork for a 5/MG firmware wake alarm — it's behind the Experimental toggle and UNCONFIRMED (help us verify it actually wakes you before relying on it). Mac: version bump only.",
+            ),
+        ),
         Release(
             version = "1.63",
             title = "Mac: strap-computed nights show in Sleep",

@@ -28,6 +28,7 @@ import com.noop.data.RrRow
 import com.noop.data.StreamBatch
 import com.noop.data.StreamPersistence
 import com.noop.data.WhoopRepository
+import com.noop.protocol.AlarmPayload
 import com.noop.protocol.BackfillCaptureJsonl
 import com.noop.protocol.BackfillCaptureRecord
 import com.noop.protocol.BackfillCaptureSummary
@@ -105,6 +106,13 @@ data class LiveState(
      *  unknowable from the protocol, so no percent). Republished every ~10 chunks: the foreground
      *  service re-posts its notification on EVERY LiveState emission, so per-chunk would spam it. */
     val syncChunksThisSession: Int = 0,
+    /** Wall-clock (unix seconds) of the last offload that ran to HISTORY_COMPLETE, or null if none
+     *  this process. For a cloud-free app this is the honest "is sync actually working?" answer — the
+     *  UI renders it as a relative "Last synced N ago". (PR #85) */
+    val lastSyncAt: Long? = null,
+    /** Set when an offload ended abnormally (strap went quiet mid-sync / idle-watchdog fired), so a
+     *  stalled history download isn't silent. Cleared on the next successful HISTORY_COMPLETE. (PR #85) */
+    val lastSyncError: String? = null,
 )
 
 /**
@@ -230,6 +238,15 @@ class WhoopBleClient(
         private const val WHOOP5_HISTORY_RETRY_DELAY_MS = 700L
         /** Debounce between a committed backfill chunk and the on-device scoring pass it schedules. */
         private const val POST_BACKFILL_ANALYZE_DELAY_MS = 1_500L
+
+        /** ATT MTU to request on connect. The default 23 caps every notification at 20 payload bytes,
+         *  so the historical offload fragments across many notifications (slow, more reassembly). 247
+         *  is what the official app requests (and the common BLE max), letting a full type-47 record
+         *  ride one packet. Benefits both families' offload. (PR #85, iHateSubscriptions) */
+        private const val GATT_MTU = 247
+        /** Proceed to service discovery even if onMtuChanged never fires (some stacks ignore
+         *  requestMtu); keeps connect from stalling behind the MTU exchange. */
+        private const val MTU_FALLBACK_MS = 1_500L
 
         /** 5/MG raw-capture file (app filesDir; shared via Settings → "Share 5/MG capture"). */
         const val WHOOP5_CAPTURE_FILE = "whoop5-backfill-capture.jsonl"
@@ -720,7 +737,8 @@ class WhoopBleClient(
             if (cmd != CommandNumber.TOGGLE_REALTIME_HR && cmd != CommandNumber.RUN_HAPTICS_PATTERN &&
                 cmd != CommandNumber.SEND_HISTORICAL_DATA && cmd != CommandNumber.HISTORICAL_DATA_RESULT &&
                 cmd != CommandNumber.SET_CLOCK && cmd != CommandNumber.GET_CLOCK &&
-                cmd != CommandNumber.GET_DATA_RANGE) {
+                cmd != CommandNumber.GET_DATA_RANGE &&
+                cmd != CommandNumber.SET_ALARM_TIME && cmd != CommandNumber.DISABLE_ALARM) {
                 log("send(${cmd.name}) skipped — no WHOOP 5/MG framing for this command yet")
                 return
             }
@@ -795,6 +813,20 @@ class WhoopBleClient(
      * 5/MG `send()` drops it (the 5/MG command set isn't verified for this yet).
      */
     fun armStrapAlarm(epochSec: Long) {
+        if (connectedFamily == DeviceFamily.WHOOP5) {
+            // 5/MG SET_ALARM_TIME is REVISION_4 (the strap arms its own RTC alarm + fires the wake
+            // haptic itself). EXPERIMENTAL/UNCONFIRMED on our side — gated behind the Experimental
+            // probes opt-in so a normal user can't rely on an alarm that might silently not fire.
+            // The strap maintains its RTC from the connect handshake / history sync, so no SET_CLOCK
+            // here. (PR #85, AlarmPayload)
+            if (!PuffinExperiment.from(context).isEnabled) {
+                log("Alarm: 5/MG firmware alarm needs the Experimental toggle (unconfirmed) — not armed")
+                return
+            }
+            send(CommandNumber.SET_ALARM_TIME, AlarmPayload.build(epochSec * 1000L))
+            log("Alarm: armed 5/MG rev4 EXPERIMENTAL (epoch $epochSec)")
+            return
+        }
         send(CommandNumber.SET_CLOCK, setClockPayload())
         val e = epochSec.toInt()
         val payload = byteArrayOf(
@@ -811,6 +843,13 @@ class WhoopBleClient(
 
     /** Clear the strap's firmware alarm. Port of macOS `BLEManager.disableStrapAlarm`. */
     fun disableStrapAlarm() {
+        if (connectedFamily == DeviceFamily.WHOOP5) {
+            // 5/MG DISABLE_ALARM is REVISION_2 [0x02, 0xFF]. Sent unconditionally (clearing is safe
+            // even if arming was gated off — a no-op on a strap with no alarm set). (PR #85)
+            send(CommandNumber.DISABLE_ALARM, AlarmPayload.disableRev2())
+            log("Alarm: disarmed (5/MG rev2)")
+            return
+        }
         send(CommandNumber.DISABLE_ALARM, byteArrayOf(0x01))
         log("Alarm: disarmed")
     }
@@ -867,6 +906,21 @@ class WhoopBleClient(
      *  deliberately NOT in reset() (it must survive into handleDisconnect's stale-bond fallback). */
     private var bondedDirectAttempt = false
 
+    /** Guards the once-per-connect service-discovery kick. Discovery is deferred behind an MTU request
+     *  (and a fallback timeout), so this ensures it fires EXACTLY once whichever path wins. AtomicBoolean
+     *  (not @Volatile): on API 26/27 the GATT callbacks land on binder-pool threads, so onMtuChanged and
+     *  the fallback can race — compareAndSet makes the once-only claim atomic. (PR #85) */
+    private val serviceDiscoveryKicked = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Start service discovery exactly once per connection, whichever path (onMtuChanged or the
+     *  fallback timeout) reaches here first. Idempotent via [serviceDiscoveryKicked]. */
+    @SuppressLint("MissingPermission")
+    private fun kickServiceDiscovery(g: BluetoothGatt, reason: String) {
+        if (!serviceDiscoveryKicked.compareAndSet(false, true)) return
+        log("Discovering services ($reason)")
+        g.discoverServices()
+    }
+
     @SuppressLint("MissingPermission")
     private fun connectToDevice(device: BluetoothDevice, autoConnect: Boolean = false) {
         // Reset per-connection state (mirrors the Swift flags cleared on connect/disconnect).
@@ -915,17 +969,33 @@ class WhoopBleClient(
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    // Port of didConnect: mark connected, then discover services.
+                    // Port of didConnect: mark connected, negotiate a larger ATT MTU, THEN discover.
                     handler.removeCallbacks(scanTimeoutRunnable)
                     _state.value = _state.value.copy(connected = true, scanning = false, statusNote = null, encryptedBond = false)
-                    log("Connected — discovering services")
-                    g.discoverServices()
+                    serviceDiscoveryKicked.set(false)
+                    // Request the larger MTU BEFORE discovery/subscribe so the offload isn't capped at
+                    // 20-byte notifications (the official app does this in its GATT init). Discovery is
+                    // gated on the result with a fallback timeout, so a stack that ignores requestMtu
+                    // can't stall the connect. (PR #85)
+                    if (g.requestMtu(GATT_MTU)) {
+                        log("Connected — requesting MTU $GATT_MTU before discovery")
+                        handler.postDelayed({ kickServiceDiscovery(g, "mtu timeout") }, MTU_FALLBACK_MS)
+                    } else {
+                        kickServiceDiscovery(g, "requestMtu rejected")
+                    }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     // Port of didDisconnectPeripheral: tear down, then auto-rescan unless intentional.
                     handleDisconnect(status)
                 }
             }
+        }
+
+        override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            // Whatever the strap granted (≤ requested). Log it, then discover. kickServiceDiscovery is
+            // idempotent, so a late callback after the fallback timeout already fired is a no-op. (PR #85)
+            log("MTU negotiated: $mtu (status=$status)")
+            kickServiceDiscovery(g, "mtu=$mtu")
         }
 
         @SuppressLint("MissingPermission")
@@ -1929,10 +1999,28 @@ class WhoopBleClient(
     private fun exitBackfilling(reason: String) {
         if (!backfilling) return
         backfilling = false
-        _state.value = _state.value.copy(
-            backfilling = false,
-            syncChunksThisSession = ackedChunksThisSession, // publish the final count
-        )
+        // Record an honest sync outcome so a cloud-free user can tell sync is working (or stuck):
+        // HISTORY_COMPLETE stamps lastSyncAt + clears any error; an idle-watchdog timeout surfaces a
+        // non-silent error. A plain disconnect mid-sync leaves both as-is (not a failure — the next
+        // connect re-offloads). The freshly-published count is preserved as the progress read. (PR #85)
+        val nowSec = System.currentTimeMillis() / 1000L
+        _state.value = when (reason) {
+            "HISTORY_COMPLETE" -> _state.value.copy(
+                backfilling = false,
+                syncChunksThisSession = ackedChunksThisSession,
+                lastSyncAt = nowSec,
+                lastSyncError = null,
+            )
+            "timeout" -> _state.value.copy(
+                backfilling = false,
+                syncChunksThisSession = ackedChunksThisSession,
+                lastSyncError = "Sync interrupted — the strap went quiet. It will retry on the next sync.",
+            )
+            else -> _state.value.copy(
+                backfilling = false,
+                syncChunksThisSession = ackedChunksThisSession,
+            )
+        }
         handler.removeCallbacks(backfillTimeoutRunnable)
         backfillFrameQueue.clear()
         closeWhoop5BackfillCapture(flushSummary = true)
