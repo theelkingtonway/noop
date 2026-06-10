@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "1.64"
+    const val CURRENT_VERSION = "1.65"
 
     data class Release(
         val version: String,
@@ -36,6 +36,14 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "1.65",
+            title = "Sync diagnostics: surfacing silently-dropped history",
+            date = "June 2026",
+            items = listOf(
+                "Diagnostics (Mac and Android): if a chunk of history arrives from the strap but none of it can be decoded — frames failing their checksum, an unrecognised firmware layout, or out-of-range timestamps — NOOP now says so plainly in the strap log instead of quietly moving on. Until now a sync like that looked completely healthy (\"history synced\") while the data went nowhere, which made a rare \"I wore it but got no data\" report almost impossible to diagnose. This release changes no behaviour — it just makes that case visible — so if your history isn't showing up, turning on Debug logging and sharing your strap log will now point straight at the cause. Investigating a report along these lines (#77).",
+            ),
+        ),
         Release(
             version = "1.64",
             title = "Android: faster sync, skin temp, sync status, alarm groundwork",

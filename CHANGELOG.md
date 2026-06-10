@@ -17,6 +17,22 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.65 — Sync diagnostics: surface silently-dropped history (#77)
+
+- **Observability only — no behaviour change.** `Backfiller.finishChunk` now logs when a chunk arrives
+  with frames but `extractHistoricalStreams` returns **zero rows** — i.e. every type-47 frame was
+  dropped (CRC fail / unmapped layout / out-of-range timestamp). Previously this acked the trim and
+  advanced the cursor while persisting nothing, so a "zero data" strap log showed only healthy
+  `acked chunk` lines and the silent loss was **invisible**. Now: `WARNING N frame(s) decoded to 0 rows
+  (trim=X) — dropped (CRC/layout/timestamp); nothing persisted`.
+- Wired both platforms: Android via a new `log` callback on `Backfiller`; macOS reuses the existing
+  `Backfiller.log` sink (which already logs unmapped firmware *versions* — this adds the **aggregate**
+  CRC-drop case). Added `Streams.isEmpty` (Swift) mirroring Android `StreamBatch.isEmpty`.
+- **Deliberately NOT changed:** the ack/trim behaviour. Refusing to ack an all-dropped chunk would
+  wedge the offload in a re-send loop if frames fail CRC systematically — that fix needs a confirmed
+  root cause first (a Samsung S23+/Android-16 reporter on #77 is the live case). This release exists to
+  make that root cause diagnosable from a user's strap log.
+
 ## 1.64 — Android: MTU 247, skin-temp, sync status, recovery UI, alarm groundwork (thanks iHateSubscriptions, #85)
 
 Reimplemented (NoopApp-authored, per our external-contribution policy) from PR #85, rebased on v1.62.

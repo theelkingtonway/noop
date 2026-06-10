@@ -439,6 +439,7 @@ class WhoopBleClient(
         cursorStore = cursorStore,
         ackTrim = { trim, endData -> ackHistoricalChunk(trim, endData) },
         onChunkCommitted = { batch -> onBackfillChunkCommitted(batch) },
+        log = { s -> log(s) },
     )
 
     /**
