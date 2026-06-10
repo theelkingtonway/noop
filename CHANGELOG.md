@@ -17,6 +17,23 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.66 — Android: WHOOP 4 unmapped-firmware fallback — the #77 fix
+
+- **Root cause (found via the Goose-PR mining + a cross-platform audit): a real macOS-only fix that
+  never reached Android.** macOS `PostHooks "historical_data"` falls back to the canonical **v24
+  layout** for an unmapped firmware version and accepts it only if it decodes to physically-real data
+  (|gravity|≈1g + plausible HR) — the issue-#30 fix. Android's `HistoricalStreams.decodeHistorical`
+  did `histVersionLayout(version) ?: return null` with **no fallback**, so a WHOOP 4 reporting a
+  layout version outside {5,7,9,12,24} had **every type-47 record dropped** → the offload "completed"
+  (`HISTORY_COMPLETE`), the trim advanced, and **zero data persisted**. Exact match for the #77
+  Samsung S23+/Android-16 symptom (sync runs, nothing shows).
+- **Fix:** ported the macOS fallback to Android `decodeHistorical` — unmapped version → decode against
+  HIST_V24 → keep ONLY if `|gravity| ∈ 0.8..1.2` and `hr ∈ 25..230`, else drop (same as before, never
+  garbage). **Strictly dominant:** recovers data the gate proves real, mapped versions untouched, no
+  scenario makes any user worse off. Pinned by `HistoricalFallbackTest` (3 cases: mapped still decodes;
+  unmapped+real falls back; unmapped+garbage still rejected).
+- macOS: **version bump only** (already had it via #30).
+
 ## 1.65 — Sync diagnostics: surface silently-dropped history (#77)
 
 - **Observability only — no behaviour change.** `Backfiller.finishChunk` now logs when a chunk arrives
